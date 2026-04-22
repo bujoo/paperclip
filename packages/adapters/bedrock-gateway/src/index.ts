@@ -28,9 +28,15 @@ Configure one of the following in adapter config \`env\` or in the server enviro
 
 1. IAM role (recommended for EC2/ECS/Lambda) — no explicit key needed; attach a role with
    \`bedrock:InvokeModel\` permission.
-2. Environment credentials — set \`AWS_ACCESS_KEY_ID\` and \`AWS_SECRET_ACCESS_KEY\` (and
+2. AWS SSO profile — set \`AWS_PROFILE\` in adapter config \`env\` to a profile configured in
+   \`~/.aws/config\`. The server process \`HOME\` is inherited by the Claude subprocess, so the
+   SSO token cache at \`~/.aws/sso/cache/\` is accessible automatically. Run
+   \`aws sso login --profile <name>\` before starting agents to refresh the token.
+3. Environment credentials — set \`AWS_ACCESS_KEY_ID\` and \`AWS_SECRET_ACCESS_KEY\` (and
    optionally \`AWS_SESSION_TOKEN\`) in adapter config \`env\`.
-3. AWS profile — set \`AWS_PROFILE\` in adapter config \`env\`.
+
+SSO example adapter config:
+  { "region": "us-west-2", "env": { "AWS_PROFILE": "wds_dev" } }
 
 Required IAM permission: \`bedrock:InvokeModel\` on the target model ARN.
 

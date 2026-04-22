@@ -81,6 +81,14 @@ import {
   agentConfigurationDoc as openclawGatewayAgentConfigurationDoc,
   models as openclawGatewayModels,
 } from "@paperclipai/adapter-openclaw-gateway";
+import {
+  execute as bedrockGatewayExecute,
+  testEnvironment as bedrockGatewayTestEnvironment,
+} from "@paperclipai/adapter-bedrock-gateway/server";
+import {
+  agentConfigurationDoc as bedrockGatewayAgentConfigurationDoc,
+  models as bedrockGatewayModels,
+} from "@paperclipai/adapter-bedrock-gateway";
 import { listCodexModels, refreshCodexModels } from "./codex-models.js";
 import { listCursorModels } from "./cursor-models.js";
 import {
@@ -245,6 +253,18 @@ const openclawGatewayAdapter: ServerAdapterModule = {
   agentConfigurationDoc: openclawGatewayAgentConfigurationDoc,
 };
 
+const bedrockGatewayAdapter: ServerAdapterModule = {
+  type: "bedrock_gateway",
+  execute: bedrockGatewayExecute,
+  testEnvironment: bedrockGatewayTestEnvironment,
+  models: bedrockGatewayModels,
+  supportsLocalAgentJwt: true,
+  supportsInstructionsBundle: true,
+  instructionsPathKey: "instructionsFilePath",
+  requiresMaterializedRuntimeSkills: false,
+  agentConfigurationDoc: bedrockGatewayAgentConfigurationDoc,
+};
+
 const openCodeLocalAdapter: ServerAdapterModule = {
   type: "opencode_local",
   execute: openCodeExecute,
@@ -368,6 +388,7 @@ function registerBuiltInAdapters() {
     cursorLocalAdapter,
     geminiLocalAdapter,
     openclawGatewayAdapter,
+    bedrockGatewayAdapter,
     hermesLocalAdapter,
     processAdapter,
     httpAdapter,

@@ -105,6 +105,11 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     comingSoon: true,
     disabledLabel: "Configure OpenClaw within the App",
   },
+  bedrock_gateway: {
+    label: "AWS Bedrock",
+    description: "Invoke Claude via AWS Bedrock",
+    icon: Bot,
+  },
   process: {
     label: "Process",
     description: "Internal process adapter",

@@ -86,9 +86,9 @@ export async function testEnvironment(
   if (!isNonEmpty(region)) {
     checks.push({
       code: "bedrock_region_missing",
-      level: "error",
-      message: "AWS region is required for bedrock_gateway.",
-      hint: "Set adapterConfig.region to a valid AWS region (e.g. us-east-1).",
+      level: "warn",
+      message: "AWS region is not set in adapterConfig.region.",
+      hint: "Set adapterConfig.region (e.g. us-west-2) or ensure AWS_REGION / a default profile in ~/.aws/config supplies it.",
     });
   } else if (!isAwsRegion(region)) {
     checks.push({
@@ -105,7 +105,7 @@ export async function testEnvironment(
     });
   }
 
-  const profileName =
+  const explicitProfile =
     (isNonEmpty(envConfig.AWS_PROFILE) ? (envConfig.AWS_PROFILE as string) : null) ??
     (isNonEmpty(process.env.AWS_PROFILE) ? process.env.AWS_PROFILE! : null);
   const hasAccessKey =
@@ -113,6 +113,13 @@ export async function testEnvironment(
   const hasSecretKey =
     isNonEmpty(envConfig.AWS_SECRET_ACCESS_KEY) || isNonEmpty(process.env.AWS_SECRET_ACCESS_KEY);
   const hasWebIdentityToken = isNonEmpty(process.env.AWS_WEB_IDENTITY_TOKEN_FILE);
+
+  // Check whether ~/.aws/config has a [default] section with SSO or static creds.
+  const awsConfigPath = path.join(os.homedir(), ".aws", "config");
+  const awsConfigContent = await fs.readFile(awsConfigPath, "utf-8").catch(() => "");
+  const hasDefaultProfile = /^\[default\]/m.test(awsConfigContent);
+
+  const profileName = explicitProfile ?? (hasDefaultProfile ? "default" : null);
 
   if (hasAccessKey && hasSecretKey) {
     checks.push({
@@ -130,17 +137,19 @@ export async function testEnvironment(
         hint: `Run: aws sso login --profile ${profileName}`,
       });
     } else if (ssoStatus === "valid") {
+      const label = profileName === "default" ? "default" : `"${profileName}"`;
       checks.push({
         code: "bedrock_credentials_sso",
         level: "info",
-        message: `AWS SSO profile "${profileName}" is configured and token appears valid.`,
+        message: `AWS SSO profile ${label} is configured and token appears valid.`,
       });
     } else {
+      const label = profileName === "default" ? "default profile" : `AWS_PROFILE="${profileName}"`;
       checks.push({
         code: "bedrock_credentials_profile",
         level: "info",
-        message: `AWS_PROFILE is configured: ${profileName}`,
-        hint: "Ensure aws sso login has been run if this is an SSO profile.",
+        message: `AWS credentials via ${label} will be used.`,
+        hint: "If this is an SSO profile, ensure aws sso login has been run.",
       });
     }
   } else if (hasWebIdentityToken) {
@@ -152,10 +161,10 @@ export async function testEnvironment(
   } else {
     checks.push({
       code: "bedrock_credentials_implicit",
-      level: "warn",
-      message: "No explicit AWS credentials detected in adapter config or environment.",
+      level: "info",
+      message: "No explicit AWS credentials in adapter config — using instance/environment credential chain.",
       hint:
-        "If running on EC2/ECS/Lambda, an attached IAM role will be used automatically. " +
+        "On EC2/ECS/Lambda an attached IAM role is used automatically. " +
         "For local use, set AWS_PROFILE (e.g. wds_dev) in adapterConfig.env after running aws sso login.",
     });
   }

@@ -1,1 +1,2 @@
-// No custom UI components needed for bedrock_gateway — the standard adapter config form handles all fields.
+export { parseClaudeStdoutLine as parseBedrockGatewayStdoutLine } from "@paperclipai/adapter-claude-local/ui";
+export { buildBedrockGatewayConfig } from "./build-config.js";

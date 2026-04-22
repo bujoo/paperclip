@@ -83,13 +83,30 @@ export async function testEnvironment(
   const region = asString(config.region, "").trim();
   const envConfig = parseObject(config.env);
 
+  const awsConfigPath = path.join(os.homedir(), ".aws", "config");
+  const awsConfigContent = await fs.readFile(awsConfigPath, "utf-8").catch(() => "");
+  const defaultProfileRegion = (() => {
+    const match = awsConfigContent.match(/^\[default\][^\[]*?^region\s*=\s*([^\s]+)/ms);
+    return match ? match[1].trim() : null;
+  })();
+  const envRegion = isNonEmpty(process.env.AWS_REGION) ? process.env.AWS_REGION! : null;
+  const resolvedRegion = region || envRegion || defaultProfileRegion;
+
   if (!isNonEmpty(region)) {
-    checks.push({
-      code: "bedrock_region_missing",
-      level: "warn",
-      message: "AWS region is not set in adapterConfig.region.",
-      hint: "Set adapterConfig.region (e.g. us-west-2) or ensure AWS_REGION / a default profile in ~/.aws/config supplies it.",
-    });
+    if (resolvedRegion) {
+      checks.push({
+        code: "bedrock_region_implicit",
+        level: "info",
+        message: `AWS region not set in adapterConfig.region — using ${envRegion ? "AWS_REGION env var" : "default profile in ~/.aws/config"}: ${resolvedRegion}`,
+      });
+    } else {
+      checks.push({
+        code: "bedrock_region_missing",
+        level: "warn",
+        message: "AWS region is not set in adapterConfig.region.",
+        hint: "Set adapterConfig.region (e.g. us-west-2) or ensure AWS_REGION / a default profile in ~/.aws/config supplies it.",
+      });
+    }
   } else if (!isAwsRegion(region)) {
     checks.push({
       code: "bedrock_region_format_invalid",
@@ -114,9 +131,6 @@ export async function testEnvironment(
     isNonEmpty(envConfig.AWS_SECRET_ACCESS_KEY) || isNonEmpty(process.env.AWS_SECRET_ACCESS_KEY);
   const hasWebIdentityToken = isNonEmpty(process.env.AWS_WEB_IDENTITY_TOKEN_FILE);
 
-  // Check whether ~/.aws/config has a [default] section with SSO or static creds.
-  const awsConfigPath = path.join(os.homedir(), ".aws", "config");
-  const awsConfigContent = await fs.readFile(awsConfigPath, "utf-8").catch(() => "");
   const hasDefaultProfile = /^\[default\]/m.test(awsConfigContent);
 
   const profileName = explicitProfile ?? (hasDefaultProfile ? "default" : null);

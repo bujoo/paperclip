@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -388,6 +389,23 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     instructionsContents: combinedInstructionsContents,
     onLog,
   });
+
+  const mcpServerStdio = path.resolve(__moduleDir, "..", "..", "..", "..", "mcp-server", "src", "stdio.ts");
+  let mcpConfigPath: string | null = null;
+  if (existsSync(mcpServerStdio)) {
+    const tscBin = path.resolve(__moduleDir, "..", "..", "..", "..", "mcp-server", "node_modules", ".bin", "tsx");
+    const mcpConfig = {
+      mcpServers: {
+        paperclip: {
+          command: existsSync(tscBin) ? tscBin : "npx",
+          args: existsSync(tscBin) ? [mcpServerStdio] : ["tsx", mcpServerStdio],
+        },
+      },
+    };
+    mcpConfigPath = path.join(promptBundle.addDir, "paperclip-mcp.json");
+    await fs.writeFile(mcpConfigPath, JSON.stringify(mcpConfig));
+  }
+
   const useManagedRemoteClaudeConfig =
     executionTargetIsRemote &&
     adapterExecutionTargetUsesManagedHome(executionTarget) &&
@@ -434,6 +452,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? path.posix.join(effectivePromptBundleAddDir, path.basename(promptBundle.instructionsFilePath))
       : promptBundle.instructionsFilePath
     : undefined;
+  const effectiveMcpConfigPath = mcpConfigPath
+    ? executionTargetIsRemote
+      ? path.posix.join(effectivePromptBundleAddDir, "paperclip-mcp.json")
+      : mcpConfigPath
+    : null;
   const remoteClaudeRuntimeRoot = executionTargetIsRemote
     ? preparedExecutionTargetRuntime?.runtimeRootDir ??
       path.posix.join(effectiveExecutionCwd, ".paperclip-runtime", "claude")
@@ -574,7 +597,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     resumeSessionId: string | null,
     attemptInstructionsFilePath: string | undefined,
   ) => {
-    const args = ["--print", "-", "--output-format", "stream-json", "--verbose"];
+    const args = ["--bare", "--print", "-", "--output-format", "stream-json", "--verbose"];
     if (resumeSessionId) args.push("--resume", resumeSessionId);
     if (dangerouslySkipPermissions) args.push("--dangerously-skip-permissions");
     if (chrome) args.push("--chrome");
@@ -593,6 +616,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push("--append-system-prompt-file", attemptInstructionsFilePath);
     }
     args.push("--add-dir", effectivePromptBundleAddDir);
+    if (effectiveMcpConfigPath) {
+      args.push("--mcp-config", effectiveMcpConfigPath);
+    }
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
   };

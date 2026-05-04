@@ -1323,7 +1323,10 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       "",
       "- Inspect the latest run and source issue state.",
       "- Fix the runtime/adapter problem, reassign the source issue, or convert the source issue into a clear manual-review state.",
-      "- When the source issue has a live execution path or has been intentionally resolved, mark this recovery issue done.",
+      "- Use `paperclipUpdateIssue` to update the source issue status (e.g. to `blocked` or `done`).",
+      "- When the source issue has a live execution path or has been intentionally resolved, use `paperclipUpdateIssue` to mark **this** recovery issue `done`.",
+      "",
+      "**Important:** Git commits and markdown files alone do not count as progress. You must use Paperclip tools (`paperclipUpdateIssue`, `paperclipAddComment`) to record your actions.",
     ].join("\n");
   }
 
@@ -1423,7 +1426,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       failureSummary ? `- Failure: ${failureSummary.trim()}` : "- Failure: none recorded",
       "- Guard: recovery issues do not create nested `stranded_issue_recovery` issues.",
       "",
-      "Next action: the current recovery owner should inspect the failed run evidence, restore a live execution path or record the manual resolution, then move this recovery issue out of `blocked`.",
+      "Next action: the current recovery owner should inspect the failed run evidence, restore a live execution path or record the manual resolution, then use `paperclipUpdateIssue` to move this recovery issue out of `blocked`.",
     ].join("\n");
   }
 

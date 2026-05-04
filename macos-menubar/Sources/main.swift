@@ -8,8 +8,8 @@ final class ServerManager {
 
     private var process: Process?
     private let projectDir = "/Users/andre/ContextHub/paperclip"
-    private let serverPort = 3101
-    private let uiPort = 3102
+    let serverPort = 3200
+    private(set) var actualPort: Int?
 
     var isRunning: Bool {
         guard let proc = process else { return isPortOpen(serverPort) }
@@ -19,18 +19,32 @@ final class ServerManager {
     func start(onOutput: @escaping (String) -> Void) {
         guard !isRunning else { return }
 
+        killProcessOnPort(serverPort)
+
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        proc.arguments = ["-l", "-c", "cd '\(projectDir)' && pnpm run dev 2>&1"]
+        proc.arguments = ["-l", "-c", "cd '\(projectDir)' && PORT=\(serverPort) pnpm run dev 2>&1"]
         proc.currentDirectoryURL = URL(fileURLWithPath: projectDir)
 
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe
 
-        pipe.fileHandleForReading.readabilityHandler = { handle in
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             if let str = String(data: data, encoding: .utf8), !str.isEmpty {
+                let plain = str.replacingOccurrences(
+                    of: #"\x1b\[[0-9;]*[A-Za-z]"#,
+                    with: "",
+                    options: .regularExpression
+                )
+                if self?.actualPort == nil,
+                   let range = plain.range(of: #"Server listening on [^\s:]+:(\d+)"#, options: .regularExpression) {
+                    let match = plain[range]
+                    if let portRange = match.range(of: #"\d+$"#, options: .regularExpression) {
+                        self?.actualPort = Int(match[portRange])
+                    }
+                }
                 DispatchQueue.main.async { onOutput(str) }
             }
         }
@@ -46,11 +60,23 @@ final class ServerManager {
     func stop() {
         process?.interrupt()
         process = nil
+        actualPort = nil
     }
 
     func openUI() {
-        let url = URL(string: "http://127.0.0.1:\(uiPort)")!
+        let port = actualPort ?? serverPort
+        let url = URL(string: "http://127.0.0.1:\(port)")!
         NSWorkspace.shared.open(url)
+    }
+
+    private func killProcessOnPort(_ port: Int) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "lsof -i :\(port) -sTCP:LISTEN -t | xargs kill -9 2>/dev/null"]
+        task.standardOutput = Pipe()
+        task.standardError = Pipe()
+        try? task.run()
+        task.waitUntilExit()
     }
 
     private func isPortOpen(_ port: Int) -> Bool {
@@ -93,14 +119,13 @@ final class StatusBarController: NSObject {
     private func updateIcon() {
         guard let button = statusItem.button else { return }
         let running = ServerManager.shared.isRunning
-        // Use paperclip symbol — SF Symbols "paperclip" available macOS 11+
         let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
         if let img = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Paperclip") {
             let configured = img.withSymbolConfiguration(config) ?? img
             configured.isTemplate = true
             button.image = configured
         } else {
-            button.title = running ? "📎" : "📎"
+            button.title = running ? "P" : "P"
         }
         button.appearsDisabled = !running
     }
@@ -138,7 +163,8 @@ final class StatusBarController: NSObject {
 
     private func refreshMenu() {
         let running = ServerManager.shared.isRunning
-        statusMenuItem.title = running ? "Running on :3101" : "Stopped"
+        let port = ServerManager.shared.actualPort ?? ServerManager.shared.serverPort
+        statusMenuItem.title = running ? "Running on :\(port)" : "Stopped"
         statusMenuItem.image = {
             let name = running ? "circle.fill" : "circle"
             let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)
@@ -203,7 +229,7 @@ final class StatusBarController: NSObject {
             backing: .buffered,
             defer: false
         )
-        window.title = "Paperclip — Server Logs"
+        window.title = "Paperclip -- Server Logs"
         window.isReleasedWhenClosed = false
 
         let scrollView = NSScrollView(frame: window.contentView!.bounds)
@@ -232,12 +258,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var controller: StatusBarController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory) // no Dock icon
+        NSApp.setActivationPolicy(.accessory)
         controller = StatusBarController()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        false // keep running when log window is closed
+        false
     }
 }
 

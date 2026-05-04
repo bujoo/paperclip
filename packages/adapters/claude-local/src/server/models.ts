@@ -30,7 +30,8 @@ export async function listClaudeModels(): Promise<AdapterModel[]> {
 }
 
 /** Check whether a model ID is a Bedrock-native identifier (not an Anthropic API short name). */
-/** Bedrock model IDs use region-qualified prefixes (e.g. us.anthropic.*, eu.anthropic.*) or ARNs. */
+/** Bedrock model IDs use region-qualified prefixes (e.g. us.anthropic.*, eu.anthropic.*),
+ *  direct Bedrock IDs (e.g. anthropic.claude-*), or ARNs. */
 export function isBedrockModelId(model: string): boolean {
-  return /^\w+\.anthropic\./.test(model) || model.startsWith("arn:aws:bedrock:");
+  return /^(?:\w+\.)?anthropic\.claude/.test(model) || model.startsWith("arn:aws:bedrock:");
 }

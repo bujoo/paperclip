@@ -2,12 +2,16 @@ export const type = "bedrock_gateway";
 export const label = "AWS Bedrock";
 
 export const models: { id: string; label: string }[] = [
-  { id: "us.anthropic.claude-opus-4-7-v1", label: "Claude Opus 4.7 (Bedrock)" },
-  { id: "us.anthropic.claude-opus-4-6-v1", label: "Claude Opus 4.6 (Bedrock)" },
-  { id: "us.anthropic.claude-sonnet-4-6-v1", label: "Claude Sonnet 4.6 (Bedrock)" },
-  { id: "us.anthropic.claude-sonnet-4-5-20250929-v2:0", label: "Claude Sonnet 4.5 (Bedrock)" },
-  { id: "us.anthropic.claude-haiku-4-6-v1", label: "Claude Haiku 4.6 (Bedrock)" },
-  { id: "us.anthropic.claude-haiku-4-5-20251001-v1:0", label: "Claude Haiku 4.5 (Bedrock)" },
+  { id: "anthropic.claude-opus-4-7", label: "Claude Opus 4.7 (Bedrock)" },
+  { id: "anthropic.claude-opus-4-6-v1", label: "Claude Opus 4.6 (Bedrock)" },
+  { id: "anthropic.claude-sonnet-4-6", label: "Claude Sonnet 4.6 (Bedrock)" },
+  { id: "anthropic.claude-sonnet-4-5-20250929-v1:0", label: "Claude Sonnet 4.5 (Bedrock)" },
+  { id: "anthropic.claude-haiku-4-5-20251001-v1:0", label: "Claude Haiku 4.5 (Bedrock)" },
+  { id: "us.anthropic.claude-opus-4-7-v1", label: "Claude Opus 4.7 (Cross-region)" },
+  { id: "us.anthropic.claude-opus-4-6-v1", label: "Claude Opus 4.6 (Cross-region)" },
+  { id: "us.anthropic.claude-sonnet-4-6-v1", label: "Claude Sonnet 4.6 (Cross-region)" },
+  { id: "us.anthropic.claude-sonnet-4-5-20250929-v2:0", label: "Claude Sonnet 4.5 (Cross-region)" },
+  { id: "us.anthropic.claude-haiku-4-5-20251001-v1:0", label: "Claude Haiku 4.5 (Cross-region)" },
 ];
 
 export const agentConfigurationDoc = `# bedrock_gateway agent configuration

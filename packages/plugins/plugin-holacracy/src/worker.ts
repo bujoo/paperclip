@@ -216,6 +216,16 @@ const plugin = definePlugin({
         return { status: 201, body: { roleId, roleName, circleId, agentId } };
       }
 
+      case "delete-circle": {
+        const circleId = input.params.circleId as string;
+        await dbCtx!.execute(`DELETE FROM ${tbl("tensions")} WHERE circle_id = $1`, [circleId]);
+        await dbCtx!.execute(`DELETE FROM ${tbl("role_assignments")} WHERE role_id IN (SELECT id FROM ${tbl("roles")} WHERE circle_id = $1)`, [circleId]);
+        await dbCtx!.execute(`DELETE FROM ${tbl("roles")} WHERE circle_id = $1`, [circleId]);
+        await dbCtx!.execute(`UPDATE ${tbl("circles")} SET parent_circle_id = NULL WHERE parent_circle_id = $1`, [circleId]);
+        await dbCtx!.execute(`DELETE FROM ${tbl("circles")} WHERE id = $1`, [circleId]);
+        return { status: 200, body: { deleted: circleId } };
+      }
+
       default:
         return { status: 404, body: { error: "Unknown route" } };
     }

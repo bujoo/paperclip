@@ -50,10 +50,11 @@ const manifest: PaperclipPluginManifestV1 = {
   },
   apiRoutes: [
     { routeKey: "list-circles", method: "GET", path: "/circles", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
-    { routeKey: "get-circle", method: "GET", path: "/circles/:circleId", auth: "board-or-agent", capability: "api.routes.register" },
+    { routeKey: "get-circle", method: "GET", path: "/circles/:circleId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
     { routeKey: "create-circle", method: "POST", path: "/circles", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
-    { routeKey: "list-roles", method: "GET", path: "/circles/:circleId/roles", auth: "board-or-agent", capability: "api.routes.register" },
-    { routeKey: "assign-role", method: "POST", path: "/circles/:circleId/roles", auth: "board-or-agent", capability: "api.routes.register" },
+    { routeKey: "list-roles", method: "GET", path: "/circles/:circleId/roles", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    { routeKey: "assign-role", method: "POST", path: "/circles/:circleId/roles", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "delete-circle", method: "DELETE", path: "/circles/:circleId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
   ],
   tools: [
     { name: "holacracy-get-circle", displayName: "Get Holacracy Circle", description: "Get a circle's structure including purpose, roles, sub-circles, and policies", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },

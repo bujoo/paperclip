@@ -56,7 +56,7 @@ const manifest: PaperclipPluginManifestV1 = {
       path: "/circles",
       auth: "board-or-agent",
       capability: "api.routes.register",
-      companyResolution: { from: "query", param: "companyId" },
+      companyResolution: { from: "query", key: "companyId" },
     },
     {
       routeKey: API_ROUTES.getCircle,
@@ -64,7 +64,6 @@ const manifest: PaperclipPluginManifestV1 = {
       path: "/circles/:circleId",
       auth: "board-or-agent",
       capability: "api.routes.register",
-      companyResolution: { from: "pluginState", stateKey: "circle", param: "circleId" },
     },
     {
       routeKey: API_ROUTES.createCircle,
@@ -72,7 +71,7 @@ const manifest: PaperclipPluginManifestV1 = {
       path: "/circles",
       auth: "board-or-agent",
       capability: "api.routes.register",
-      companyResolution: { from: "body", param: "companyId" },
+      companyResolution: { from: "body", key: "companyId" },
     },
     {
       routeKey: API_ROUTES.listRoles,
@@ -80,7 +79,6 @@ const manifest: PaperclipPluginManifestV1 = {
       path: "/circles/:circleId/roles",
       auth: "board-or-agent",
       capability: "api.routes.register",
-      companyResolution: { from: "pluginState", stateKey: "circle", param: "circleId" },
     },
     {
       routeKey: API_ROUTES.assignRole,
@@ -88,36 +86,34 @@ const manifest: PaperclipPluginManifestV1 = {
       path: "/circles/:circleId/roles",
       auth: "board-or-agent",
       capability: "api.routes.register",
-      companyResolution: { from: "pluginState", stateKey: "circle", param: "circleId" },
     },
   ],
   tools: [
     {
       name: TOOL_NAMES.getCircle,
+      displayName: "Get Holacracy Circle",
       description: "Get a Holacracy circle's structure including its purpose, roles, sub-circles, and policies",
-      inputSchema: {
+      parametersSchema: {
         type: "object",
-        properties: {
-          circleId: { type: "string", description: "Circle ID to query" },
-        },
+        properties: { circleId: { type: "string", description: "Circle ID to query" } },
         required: ["circleId"],
       },
     },
     {
       name: TOOL_NAMES.getRole,
+      displayName: "Get Holacracy Role",
       description: "Get a Holacracy role's details including purpose, accountabilities, domains, and who fills it",
-      inputSchema: {
+      parametersSchema: {
         type: "object",
-        properties: {
-          roleId: { type: "string", description: "Role ID to query" },
-        },
+        properties: { roleId: { type: "string", description: "Role ID to query" } },
         required: ["roleId"],
       },
     },
     {
       name: TOOL_NAMES.listTensions,
+      displayName: "List Circle Tensions",
       description: "List open tensions in a Holacracy circle, optionally filtered by type (operational or governance)",
-      inputSchema: {
+      parametersSchema: {
         type: "object",
         properties: {
           circleId: { type: "string", description: "Circle ID to query tensions for" },
@@ -128,12 +124,13 @@ const manifest: PaperclipPluginManifestV1 = {
     },
     {
       name: TOOL_NAMES.raiseTension,
+      displayName: "Raise Tension",
       description: "Raise a tension in a Holacracy circle. The tension will be triaged in the next tactical or governance meeting.",
-      inputSchema: {
+      parametersSchema: {
         type: "object",
         properties: {
           circleId: { type: "string", description: "Circle where the tension exists" },
-          title: { type: "string", description: "Brief title for the tension (1-2 words)" },
+          title: { type: "string", description: "Brief title for the tension" },
           description: { type: "string", description: "What is the gap between current reality and what could be?" },
           type: { type: "string", enum: ["operational", "governance"], description: "Operational = tactical meeting, governance = governance meeting" },
         },
@@ -143,44 +140,12 @@ const manifest: PaperclipPluginManifestV1 = {
   ],
   ui: {
     slots: [
-      {
-        type: "page",
-        id: SLOT_IDS.page,
-        displayName: "Circles",
-        exportName: EXPORT_NAMES.page,
-      },
-      {
-        type: "sidebar",
-        id: SLOT_IDS.sidebar,
-        displayName: "Circles",
-        exportName: EXPORT_NAMES.sidebar,
-      },
-      {
-        type: "detailTab",
-        id: SLOT_IDS.agentTab,
-        displayName: "Role",
-        exportName: EXPORT_NAMES.agentTab,
-        entityTypes: ["agent"],
-      },
-      {
-        type: "detailTab",
-        id: SLOT_IDS.projectTab,
-        displayName: "Circle",
-        exportName: EXPORT_NAMES.projectTab,
-        entityTypes: ["project"],
-      },
-      {
-        type: "dashboardWidget",
-        id: SLOT_IDS.dashboardWidget,
-        displayName: "Circle Health",
-        exportName: EXPORT_NAMES.dashboardWidget,
-      },
-      {
-        type: "settingsPage",
-        id: SLOT_IDS.settingsPage,
-        displayName: "Holacracy",
-        exportName: EXPORT_NAMES.settingsPage,
-      },
+      { type: "page", id: SLOT_IDS.page, displayName: "Circles", exportName: EXPORT_NAMES.page },
+      { type: "sidebar", id: SLOT_IDS.sidebar, displayName: "Circles", exportName: EXPORT_NAMES.sidebar },
+      { type: "detailTab", id: SLOT_IDS.agentTab, displayName: "Role", exportName: EXPORT_NAMES.agentTab, entityTypes: ["agent"] },
+      { type: "detailTab", id: SLOT_IDS.projectTab, displayName: "Circle", exportName: EXPORT_NAMES.projectTab, entityTypes: ["project"] },
+      { type: "dashboardWidget", id: SLOT_IDS.dashboardWidget, displayName: "Circle Health", exportName: EXPORT_NAMES.dashboardWidget },
+      { type: "settingsPage", id: SLOT_IDS.settingsPage, displayName: "Holacracy", exportName: EXPORT_NAMES.settingsPage },
     ],
   },
 };

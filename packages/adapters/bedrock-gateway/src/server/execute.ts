@@ -9,6 +9,7 @@ function patchContextForBedrock(ctx: AdapterExecutionContext): AdapterExecutionC
   const existingEnv = parseObject(config.env);
   const bedrockEnv: Record<string, string> = {
     CLAUDE_CODE_USE_BEDROCK: "1",
+    CLAUDE_CODE_SIMPLE: "1",
     ...(region ? { AWS_REGION: region } : {}),
   };
 

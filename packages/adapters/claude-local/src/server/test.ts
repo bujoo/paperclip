@@ -188,7 +188,7 @@ export async function testEnvironment(
         return asStringArray(config.args);
       })();
 
-      const args = ["--bare", "--print", "-", "--output-format", "stream-json", "--verbose"];
+      const args = ["--print", "-", "--output-format", "stream-json", "--verbose"];
       if (dangerouslySkipPermissions) args.push("--dangerously-skip-permissions");
       if (chrome) args.push("--chrome");
       // For Bedrock: only pass --model when the ID is a Bedrock-native identifier.

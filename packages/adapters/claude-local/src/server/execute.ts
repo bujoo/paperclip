@@ -153,6 +153,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     typeof envConfig.PAPERCLIP_API_KEY === "string" && envConfig.PAPERCLIP_API_KEY.trim().length > 0;
   const env: Record<string, string> = { ...buildPaperclipEnv(agent) };
   env.PAPERCLIP_RUN_ID = runId;
+  env.CLAUDE_CODE_SIMPLE = "1";
 
   const wakeTaskId =
     (typeof context.taskId === "string" && context.taskId.trim().length > 0 && context.taskId.trim()) ||
@@ -597,7 +598,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     resumeSessionId: string | null,
     attemptInstructionsFilePath: string | undefined,
   ) => {
-    const args = ["--bare", "--print", "-", "--output-format", "stream-json", "--verbose"];
+    const args = ["--print", "-", "--output-format", "stream-json", "--verbose"];
     if (resumeSessionId) args.push("--resume", resumeSessionId);
     if (dangerouslySkipPermissions) args.push("--dangerously-skip-permissions");
     if (chrome) args.push("--chrome");

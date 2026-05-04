@@ -188,6 +188,7 @@ export async function testEnvironment(
     env: {
       ...envConfig,
       CLAUDE_CODE_USE_BEDROCK: "1",
+      CLAUDE_CODE_SIMPLE: "1",
       ...(isNonEmpty(region) ? { AWS_REGION: region } : {}),
     },
   };

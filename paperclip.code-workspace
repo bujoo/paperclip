@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../gstack"
+		}
+	],
+	"settings": {
+		"jira-plugin.workingProject": ""
+	}
+}

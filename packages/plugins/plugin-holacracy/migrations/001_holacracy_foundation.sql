@@ -1,4 +1,4 @@
-CREATE TABLE plugin_holacracy_c5049b5dfe.circles (
+CREATE TABLE IF NOT EXISTS plugin_holacracy_c5049b5dfe.circles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id uuid NOT NULL,
   project_id uuid REFERENCES public.projects(id) ON DELETE SET NULL,
@@ -12,7 +12,7 @@ CREATE TABLE plugin_holacracy_c5049b5dfe.circles (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE plugin_holacracy_c5049b5dfe.roles (
+CREATE TABLE IF NOT EXISTS plugin_holacracy_c5049b5dfe.roles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   circle_id uuid NOT NULL REFERENCES plugin_holacracy_c5049b5dfe.circles(id) ON DELETE CASCADE,
   name text NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE plugin_holacracy_c5049b5dfe.roles (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE plugin_holacracy_c5049b5dfe.role_assignments (
+CREATE TABLE IF NOT EXISTS plugin_holacracy_c5049b5dfe.role_assignments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   role_id uuid NOT NULL REFERENCES plugin_holacracy_c5049b5dfe.roles(id) ON DELETE CASCADE,
   agent_id uuid NOT NULL,
@@ -33,7 +33,7 @@ CREATE TABLE plugin_holacracy_c5049b5dfe.role_assignments (
   UNIQUE(role_id, agent_id)
 );
 
-CREATE TABLE plugin_holacracy_c5049b5dfe.tensions (
+CREATE TABLE IF NOT EXISTS plugin_holacracy_c5049b5dfe.tensions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   circle_id uuid NOT NULL REFERENCES plugin_holacracy_c5049b5dfe.circles(id) ON DELETE CASCADE,
   issue_id uuid REFERENCES public.issues(id) ON DELETE SET NULL,

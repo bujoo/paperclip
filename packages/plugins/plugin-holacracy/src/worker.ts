@@ -73,12 +73,12 @@ async function queryCircleDetail(circleId: string) {
 async function createCircle(companyId: string, name: string, purpose: string | null, parentCircleId: string | null, projectId: string | null, color: string | null) {
   if (!dbCtx) throw new Error("DB not initialized");
   const id = randomUUID();
-  await dbCtx.query(
+  await dbCtx.execute(
     `INSERT INTO ${tbl("circles")} (id, company_id, name, purpose, parent_circle_id, project_id, color) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [id, companyId, name, purpose, parentCircleId, projectId, color],
   );
   for (const def of CORE_ROLE_DEFS) {
-    await dbCtx.query(
+    await dbCtx.execute(
       `INSERT INTO ${tbl("roles")} (id, circle_id, name, purpose, role_type) VALUES ($1, $2, $3, $4, $5)`,
       [randomUUID(), id, def.name, def.purpose, def.type],
     );
@@ -136,7 +136,7 @@ const plugin = definePlugin({
       async (params, runCtx): Promise<ToolResult> => {
         const { circleId, title, description, type: tensionType } = params as { circleId: string; title: string; description: string; type: string };
         const id = randomUUID();
-        await dbCtx!.query(
+        await dbCtx!.execute(
           `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type) VALUES ($1, $2, $3, $4, $5, $6)`,
           [id, circleId, runCtx.agentId ?? null, title, description, tensionType],
         );
@@ -185,12 +185,12 @@ const plugin = definePlugin({
           roleName: string; roleType?: string; purpose?: string; accountabilities?: string[]; domains?: string[]; agentId?: string;
         };
         const roleId = randomUUID();
-        await dbCtx!.query(
+        await dbCtx!.execute(
           `INSERT INTO ${tbl("roles")} (id, circle_id, name, purpose, role_type, accountabilities, domains) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [roleId, circleId, roleName, purpose ?? null, roleType ?? "custom", JSON.stringify(accountabilities ?? []), JSON.stringify(domains ?? [])],
         );
         if (agentId) {
-          await dbCtx!.query(
+          await dbCtx!.execute(
             `INSERT INTO ${tbl("role_assignments")} (id, role_id, agent_id) VALUES ($1, $2, $3)`,
             [randomUUID(), roleId, agentId],
           );

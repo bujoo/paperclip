@@ -117,12 +117,15 @@ function layoutTree(roots: TreeNode[]): { circles: RenderedCircle[]; roles: Rend
       return;
     }
 
-    const childR = r * 0.42;
-    const ringR = r * 0.48;
+    const n = children.length;
+    const ringR = r * 0.52;
+    const maxChildR = ringR * Math.sin(Math.PI / Math.max(n, 2)) * 0.90;
+    const containedR = r - ringR - 10;
+    const childR = Math.min(maxChildR, containedR);
     const startAngle = -Math.PI / 2;
 
     children.forEach((child, i) => {
-      const angle = startAngle + (2 * Math.PI * i) / children.length;
+      const angle = startAngle + (2 * Math.PI * i) / n;
       const childCx = cx + Math.cos(angle) * ringR;
       const childCy = cy + Math.sin(angle) * ringR;
       layoutNode(child, childCx, childCy, childR);

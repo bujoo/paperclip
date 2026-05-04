@@ -90,6 +90,24 @@ const plugin = definePlugin({
   async setup(ctx) {
     dbCtx = ctx.db;
 
+    ctx.data.register("circles-tree", async (params) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return [];
+      const circles = await ctx.db.query<Circle>(
+        `SELECT * FROM ${tbl("circles")} WHERE company_id = $1 ORDER BY parent_circle_id NULLS FIRST, name`,
+        [companyId],
+      );
+      const result = [];
+      for (const c of circles) {
+        const roles = await ctx.db.query<Role>(
+          `SELECT r.*, ra.agent_id, a.name as agent_name FROM ${tbl("roles")} r LEFT JOIN ${tbl("role_assignments")} ra ON ra.role_id = r.id LEFT JOIN public.agents a ON a.id = ra.agent_id WHERE r.circle_id = $1 ORDER BY r.role_type, r.name`,
+          [c.id],
+        );
+        result.push({ ...c, roles });
+      }
+      return result;
+    });
+
     ctx.tools.register(
       TOOL_NAMES.getCircle,
       { displayName: "Get Holacracy Circle", description: "Get a circle's structure including purpose, roles, sub-circles, and policies", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },

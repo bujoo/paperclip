@@ -316,117 +316,182 @@ export function CircleNavigator() {
   }
   if (!layout) return null;
 
-  const sectionStyle: React.CSSProperties = {
-    fontSize: 12, fontWeight: 600, color: "var(--muted-foreground)", textTransform: "uppercase",
-    letterSpacing: "0.05em", marginBottom: 10, marginTop: 28,
-  };
-  const cardStyle: React.CSSProperties = {
-    padding: "12px 16px", background: "var(--accent)", borderRadius: 8,
-    border: "1px solid var(--border)", marginBottom: 8,
-  };
-
   if (detailCircle) {
+    const domains = (detailCircle as any).domains as string[] | undefined;
+    const strategies = govDetail?.strategies ?? [];
+    const policies = govDetail?.policies ?? [];
+    const checklists = govDetail?.checklists ?? [];
+    const metrics = govDetail?.metrics ?? [];
+    const subCircles = data ? data.filter(c => c.parent_circle_id === detailCircleId) : [];
+
     return (
-      <div style={{ background: "var(--card)", borderRadius: 8, overflow: "hidden" }}>
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10 }}>
-          <span
-            onClick={() => setDetailCircleId(null)}
-            style={{ color: LINK_BLUE, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
-          >
-            All Circles
-          </span>
-          <span style={{ color: "var(--muted-foreground)" }}>/</span>
-          <span style={{ color: TEXT_DARK, fontWeight: 600, fontSize: 14 }}>{detailCircle.name}</span>
-        </div>
-
-        <div style={{ display: "flex", gap: 0 }}>
-          <div style={{ flex: 1, padding: "24px 32px", minWidth: 0 }}>
-            {detailCircle.purpose && (
-              <div style={{ fontSize: 15, color: "var(--foreground)", lineHeight: 1.6, marginBottom: 8 }}>
-                {detailCircle.purpose}
-              </div>
-            )}
-
-            {govDetail && govDetail.strategies.length > 0 && (
-              <div style={{ padding: "14px 18px", background: "color-mix(in oklch, #22c55e 10%, var(--card))", borderRadius: 8, border: "1px solid color-mix(in oklch, #22c55e 30%, transparent)", marginBottom: 24 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "#4ade80", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Strategy</div>
-                {govDetail.strategies.map((s) => (
-                  <div key={s.id} style={{ fontSize: 15, color: "var(--foreground)", fontWeight: 500, lineHeight: 1.5 }}>
-                    {s.text}
-                    {s.set_by_name && <span style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 400, marginLeft: 8 }}>-- {s.set_by_name}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-
-          {detailCircle.domains && (detailCircle.domains as string[]).length > 0 && (
-            <>
-              <div style={sectionStyle}>Domains ({(detailCircle.domains as string[]).length})</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {(detailCircle.domains as string[]).map((d, i) => (
-                  <span key={i} style={{ fontSize: 13, color: "var(--foreground)", background: "var(--muted)", padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)" }}>{d}</span>
-                ))}
-              </div>
-            </>
-          )}
-
-          {govDetail && govDetail.policies.length > 0 && (
-            <>
-              <div style={sectionStyle}>Policies ({govDetail.policies.length})</div>
-              {govDetail.policies.map((p) => (
-                <div key={p.id} style={cardStyle}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                    <span style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)" }}>{p.title}</span>
-                    {p.domain && <span style={{ fontSize: 11, color: "var(--muted-foreground)", background: "var(--muted)", padding: "2px 8px", borderRadius: 4 }}>{p.domain}</span>}
-                  </div>
-                  <div style={{ fontSize: 13, color: "var(--foreground)", lineHeight: 1.6 }}>{p.description}</div>
+      <div style={{ display: "flex", gap: 0 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", flexDirection: "column" as const, gap: 24 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+                <div style={{
+                  flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                  height: 48, width: 48, borderRadius: 8, background: "var(--accent)",
+                }}>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", border: "2.5px solid " + CIRCLE_STROKE, background: CIRCLE_FILL }} />
                 </div>
-              ))}
-            </>
-          )}
+                <div style={{ minWidth: 0 }}>
+                  <h2 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: "var(--foreground)" }}>{detailCircle.name}</h2>
+                  {detailCircle.purpose && <p style={{ fontSize: 14, color: "var(--muted-foreground)", margin: "2px 0 0 0" }}>{detailCircle.purpose}</p>}
+                </div>
+              </div>
 
-          {govDetail && (govDetail.checklists.length > 0 || govDetail.metrics.length > 0) && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginTop: 8 }}>
-              {govDetail.checklists.length > 0 && (
-                <div>
-                  <div style={sectionStyle}>Checklists ({govDetail.checklists.length})</div>
-                  {govDetail.checklists.map((cl) => (
-                    <div key={cl.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 14px", background: "var(--accent)", borderRadius: 6, border: "1px solid var(--border)", marginBottom: 6 }}>
-                      <div>
-                        <div style={{ fontSize: 13, color: "var(--foreground)" }}>{cl.item_text}</div>
-                        {cl.role_name && <div style={{ fontSize: 11, color: "var(--muted-foreground)", marginTop: 2 }}>{cl.role_name}</div>}
-                      </div>
-                      <span style={{
-                        fontSize: 11, padding: "2px 8px", borderRadius: 4, fontWeight: 500, whiteSpace: "nowrap",
-                        background: cl.frequency === "daily" ? "color-mix(in oklch, #10b981 15%, transparent)" : "var(--muted)",
-                        color: cl.frequency === "daily" ? "#34d399" : "var(--muted-foreground)",
-                      }}>{cl.frequency}</span>
+              {strategies.length > 0 && (
+                <div style={{ padding: 16, background: "color-mix(in oklch, #22c55e 10%, var(--card))", borderRadius: 8, border: "1px solid color-mix(in oklch, #22c55e 30%, transparent)" }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#4ade80", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Strategy</div>
+                  {strategies.map((s) => (
+                    <div key={s.id} style={{ fontSize: 15, color: "var(--foreground)", fontWeight: 500, lineHeight: 1.5 }}>
+                      {s.text}
+                      {s.set_by_name && <span style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 400, marginLeft: 8 }}>-- {s.set_by_name}</span>}
                     </div>
                   ))}
                 </div>
               )}
-              {govDetail.metrics.length > 0 && (
+
+              {detailCircle.roles.length > 0 && (
                 <div>
-                  <div style={sectionStyle}>Metrics ({govDetail.metrics.length})</div>
-                  {govDetail.metrics.map((m) => (
-                    <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 14px", background: "var(--accent)", borderRadius: 6, border: "1px solid var(--border)", marginBottom: 6 }}>
-                      <div>
-                        <div style={{ fontSize: 13, color: "var(--foreground)" }}>{m.name}</div>
-                        {m.role_name && <div style={{ fontSize: 11, color: "var(--muted-foreground)", marginTop: 2 }}>{m.role_name}</div>}
+                  <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0", color: "var(--foreground)" }}>Roles</h3>
+                  <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+                    {detailCircle.roles.map((role, i) => (
+                      <div key={role.id} style={{
+                        display: "flex", alignItems: "center", gap: 12, padding: "10px 16px",
+                        borderBottom: i < detailCircle.roles.length - 1 ? "1px solid var(--border)" : "none",
+                      }}>
+                        <span style={{
+                          width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                          background: role.agent_name ? ROLE_GREEN : "transparent",
+                          border: role.agent_name ? "none" : `1.5px solid ${ROLE_GREEN}`,
+                          boxSizing: "border-box" as const,
+                        }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ fontSize: 14, color: "var(--foreground)", fontWeight: 500 }}>{role.agent_name ?? role.name}</span>
+                        </div>
+                        <span style={{
+                          display: "inline-flex", alignItems: "center", borderRadius: 9999,
+                          padding: "2px 10px", fontSize: 12, fontWeight: 500,
+                          background: role.agent_name ? "color-mix(in oklch, #4ade80 15%, transparent)" : "color-mix(in oklch, #f97316 15%, transparent)",
+                          color: role.agent_name ? "#4ade80" : "#f97316",
+                        }}>{roleTypeLabel(role.role_type)}</span>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        {m.unit && <span style={{ fontSize: 12, color: "var(--foreground)", fontWeight: 500 }}>{m.unit}</span>}
-                        <span style={{ fontSize: 11, color: "var(--muted-foreground)", background: "var(--muted)", padding: "2px 8px", borderRadius: 4 }}>{m.frequency}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {domains && domains.length > 0 && (
+                <div>
+                  <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0", color: "var(--foreground)" }}>Domains</h3>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {domains.map((d, i) => (
+                      <span key={i} style={{
+                        display: "inline-flex", alignItems: "center", borderRadius: 9999,
+                        padding: "4px 12px", fontSize: 12, color: "var(--foreground)",
+                        border: "1px solid var(--border)", background: "var(--accent)",
+                      }}>{d}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {policies.length > 0 && (
+                <div>
+                  <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0", color: "var(--foreground)" }}>Policies</h3>
+                  <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+                    {policies.map((p, i) => (
+                      <div key={p.id} style={{
+                        padding: "12px 16px",
+                        borderBottom: i < policies.length - 1 ? "1px solid var(--border)" : "none",
+                      }}>
+                        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                          <span style={{ fontSize: 14, fontWeight: 500, color: "var(--foreground)" }}>{p.title}</span>
+                          {p.domain && <span style={{
+                            fontSize: 11, color: "var(--muted-foreground)", background: "var(--muted)",
+                            padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap",
+                          }}>{p.domain}</span>}
+                        </div>
+                        <div style={{ fontSize: 13, color: "var(--muted-foreground)", marginTop: 4, lineHeight: 1.5 }}>{p.description}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(checklists.length > 0 || metrics.length > 0) && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+                  {checklists.length > 0 && (
+                    <div>
+                      <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0", color: "var(--foreground)" }}>Checklists</h3>
+                      <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+                        <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ borderBottom: "1px solid var(--border)", background: "color-mix(in oklch, var(--accent) 50%, transparent)" }}>
+                              <th style={{ textAlign: "left" as const, padding: "6px 12px", fontWeight: 500, fontSize: 12, color: "var(--muted-foreground)" }}>Item</th>
+                              <th style={{ textAlign: "left" as const, padding: "6px 12px", fontWeight: 500, fontSize: 12, color: "var(--muted-foreground)" }}>Role</th>
+                              <th style={{ textAlign: "right" as const, padding: "6px 12px", fontWeight: 500, fontSize: 12, color: "var(--muted-foreground)" }}>Frequency</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {checklists.map((cl, i) => (
+                              <tr key={cl.id} style={{ borderBottom: i < checklists.length - 1 ? "1px solid var(--border)" : "none" }}>
+                                <td style={{ padding: "8px 12px", color: "var(--foreground)" }}>{cl.item_text}</td>
+                                <td style={{ padding: "8px 12px", color: "var(--muted-foreground)", fontSize: 12 }}>{cl.role_name ?? ""}</td>
+                                <td style={{ padding: "8px 12px", textAlign: "right" as const }}>
+                                  <span style={{
+                                    fontSize: 11, padding: "2px 8px", borderRadius: 9999, fontWeight: 500,
+                                    background: cl.frequency === "daily" ? "color-mix(in oklch, #10b981 15%, transparent)" : "var(--muted)",
+                                    color: cl.frequency === "daily" ? "#34d399" : "var(--muted-foreground)",
+                                  }}>{cl.frequency}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
-                  ))}
+                  )}
+                  {metrics.length > 0 && (
+                    <div>
+                      <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0", color: "var(--foreground)" }}>Metrics</h3>
+                      <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+                        <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ borderBottom: "1px solid var(--border)", background: "color-mix(in oklch, var(--accent) 50%, transparent)" }}>
+                              <th style={{ textAlign: "left" as const, padding: "6px 12px", fontWeight: 500, fontSize: 12, color: "var(--muted-foreground)" }}>Name</th>
+                              <th style={{ textAlign: "left" as const, padding: "6px 12px", fontWeight: 500, fontSize: 12, color: "var(--muted-foreground)" }}>Role</th>
+                              <th style={{ textAlign: "left" as const, padding: "6px 12px", fontWeight: 500, fontSize: 12, color: "var(--muted-foreground)" }}>Unit</th>
+                              <th style={{ textAlign: "right" as const, padding: "6px 12px", fontWeight: 500, fontSize: 12, color: "var(--muted-foreground)" }}>Frequency</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {metrics.map((m, i) => (
+                              <tr key={m.id} style={{ borderBottom: i < metrics.length - 1 ? "1px solid var(--border)" : "none" }}>
+                                <td style={{ padding: "8px 12px", color: "var(--foreground)" }}>{m.name}</td>
+                                <td style={{ padding: "8px 12px", color: "var(--muted-foreground)", fontSize: 12 }}>{m.role_name ?? ""}</td>
+                                <td style={{ padding: "8px 12px", color: "var(--muted-foreground)", fontSize: 12 }}>{m.unit ?? ""}</td>
+                                <td style={{ padding: "8px 12px", textAlign: "right" as const }}>
+                                  <span style={{
+                                    fontSize: 11, padding: "2px 8px", borderRadius: 9999, fontWeight: 500,
+                                    background: "var(--muted)", color: "var(--muted-foreground)",
+                                  }}>{m.frequency}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          )}
           </div>
 
-          <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid var(--border)", padding: "16px" }}>
+          <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid var(--border)", padding: 16 }}>
             {layout && (
               <div style={{ marginBottom: 16 }}>
                 <svg viewBox="0 -15 1000 1030" style={{ width: "100%", height: 200, display: "block" }}>
@@ -461,39 +526,56 @@ export function CircleNavigator() {
               </div>
             )}
 
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)", marginBottom: 8 }}>{detailCircle.name}</div>
-            {detailCircle.roles.map((role) => (
-              <div key={role.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                <span style={{
-                  width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-                  background: role.agent_name ? ROLE_GREEN : "transparent",
-                  border: role.agent_name ? "none" : `1.5px solid ${ROLE_GREEN}`,
-                  display: "inline-block", boxSizing: "border-box",
-                }} />
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: LINK_BLUE, fontWeight: 500 }}>{role.agent_name ?? role.name}</div>
-                  {role.agent_name && <div style={{ fontSize: 11, color: "var(--muted-foreground)" }}>{role.name}</div>}
-                </div>
-              </div>
-            ))}
-            {data && data.filter(c => c.parent_circle_id === detailCircleId).length > 0 && (
-              <>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)", textTransform: "uppercase", marginTop: 16, marginBottom: 6 }}>Sub-Circles</div>
-                {data.filter(c => c.parent_circle_id === detailCircleId).map(sub => (
-                  <div
-                    key={sub.id}
-                    onClick={() => setDetailCircleId(sub.id)}
-                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--border)", cursor: "pointer" }}
-                  >
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: sub.color || "var(--muted-foreground)", display: "inline-block" }} />
-                    <span style={{ fontSize: 13, color: LINK_BLUE, fontWeight: 500 }}>{sub.name}</span>
+            <div style={{ fontSize: 14, fontWeight: 500, color: "var(--foreground)", marginBottom: 8 }}>{detailCircle.name}</div>
+            <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+              {detailCircle.roles.map((role, i) => (
+                <div key={role.id} style={{
+                  display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
+                  borderBottom: i < detailCircle.roles.length - 1 ? "1px solid var(--border)" : "none",
+                }}>
+                  <span style={{
+                    width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                    background: role.agent_name ? ROLE_GREEN : "transparent",
+                    border: role.agent_name ? "none" : `1.5px solid ${ROLE_GREEN}`,
+                    boxSizing: "border-box" as const,
+                  }} />
+                  <div style={{ minWidth: 0 }}>
+                    {role.agent_name ? (
+                      <a
+                        href={`/CH/agents/${role.agent_name.toLowerCase().replace(/&/g, "").replace(/\s+/g, "-")}`}
+                        style={{ fontSize: 13, color: LINK_BLUE, fontWeight: 500, textDecoration: "none" }}
+                      >{role.agent_name}</a>
+                    ) : (
+                      <div style={{ fontSize: 13, color: "var(--muted-foreground)", fontStyle: "italic" }}>{role.name}</div>
+                    )}
+                    <div style={{ fontSize: 11, color: "var(--muted-foreground)" }}>{role.agent_name ? role.name : "Unassigned"}</div>
                   </div>
-                ))}
+                </div>
+              ))}
+            </div>
+            {subCircles.length > 0 && (
+              <>
+                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--foreground)", marginTop: 16, marginBottom: 8 }}>Sub-Circles</div>
+                <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+                  {subCircles.map((sub, i) => (
+                    <div
+                      key={sub.id}
+                      onClick={() => setDetailCircleId(sub.id)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
+                        borderBottom: i < subCircles.length - 1 ? "1px solid var(--border)" : "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: sub.color || "var(--muted-foreground)", flexShrink: 0 }} />
+                      <span style={{ fontSize: 13, color: "var(--foreground)", fontWeight: 500 }}>{sub.name}</span>
+                    </div>
+                  ))}
+                </div>
               </>
             )}
           </div>
         </div>
-      </div>
     );
   }
 

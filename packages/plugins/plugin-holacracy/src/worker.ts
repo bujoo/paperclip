@@ -118,6 +118,54 @@ const plugin = definePlugin({
       );
     });
 
+    ctx.data.register("circle-governance", async (params) => {
+      const circleId = params.circleId as string;
+      if (!circleId) return null;
+      const strategies = await ctx.db.query(
+        `SELECT s.*, a.name as set_by_name FROM ${tbl("strategies")} s LEFT JOIN public.agents a ON a.id = s.set_by WHERE s.circle_id = $1 AND s.active = true ORDER BY s.created_at DESC`,
+        [circleId],
+      );
+      const policies = await ctx.db.query(
+        `SELECT * FROM ${tbl("policies")} WHERE circle_id = $1 ORDER BY created_at DESC`,
+        [circleId],
+      );
+      const checklists = await ctx.db.query(
+        `SELECT cl.*, r.name as role_name FROM ${tbl("checklists")} cl LEFT JOIN ${tbl("roles")} r ON r.id = cl.role_id WHERE cl.circle_id = $1 ORDER BY cl.frequency, cl.created_at`,
+        [circleId],
+      );
+      const metrics = await ctx.db.query(
+        `SELECT m.*, r.name as role_name FROM ${tbl("metrics")} m LEFT JOIN ${tbl("roles")} r ON r.id = m.role_id WHERE m.circle_id = $1 ORDER BY m.frequency, m.created_at`,
+        [circleId],
+      );
+      return { strategies, policies, checklists, metrics };
+    });
+
+    ctx.data.register("governance-summary", async (params) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return null;
+      const circles = await ctx.db.query(
+        `SELECT c.id, c.name, c.purpose, c.domains, c.color FROM ${tbl("circles")} WHERE company_id = $1 ORDER BY parent_circle_id NULLS FIRST, name`,
+        [companyId],
+      );
+      const result = [];
+      for (const c of circles) {
+        const stratCount = await ctx.db.query(`SELECT COUNT(*)::int as count FROM ${tbl("strategies")} WHERE circle_id = $1 AND active = true`, [c.id]);
+        const polCount = await ctx.db.query(`SELECT COUNT(*)::int as count FROM ${tbl("policies")} WHERE circle_id = $1`, [c.id]);
+        const clCount = await ctx.db.query(`SELECT COUNT(*)::int as count FROM ${tbl("checklists")} WHERE circle_id = $1`, [c.id]);
+        const metCount = await ctx.db.query(`SELECT COUNT(*)::int as count FROM ${tbl("metrics")} WHERE circle_id = $1`, [c.id]);
+        const tensionCount = await ctx.db.query(`SELECT COUNT(*)::int as count FROM ${tbl("tensions")} WHERE circle_id = $1 AND status = 'open'`, [c.id]);
+        result.push({
+          ...c,
+          strategiesCount: stratCount[0]?.count ?? 0,
+          policiesCount: polCount[0]?.count ?? 0,
+          checklistsCount: clCount[0]?.count ?? 0,
+          metricsCount: metCount[0]?.count ?? 0,
+          openTensionsCount: tensionCount[0]?.count ?? 0,
+        });
+      }
+      return result;
+    });
+
     ctx.tools.register(
       TOOL_NAMES.getCircle,
       { displayName: "Get Holacracy Circle", description: "Get a circle's structure including purpose, roles, sub-circles, and policies", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },

@@ -465,7 +465,124 @@ export function CircleNavigator() {
 }
 
 export function HolacracySidebar() {
-  return <div style={{ padding: "8px 12px", fontSize: 13, color: "#9ca3af" }}>Circles</div>;
+  const hostCtx = useHostContext();
+  const companyId = hostCtx?.companyId ?? null;
+  const [expandedCircle, setExpandedCircle] = useState<string | null>(null);
+
+  const { data: summary } = usePluginData<Array<{
+    id: string; name: string; purpose: string | null; color: string | null; domains: string[];
+    strategiesCount: number; policiesCount: number; checklistsCount: number;
+    metricsCount: number; openTensionsCount: number;
+  }>>("governance-summary", { companyId: companyId ?? "" });
+
+  const { data: governance } = usePluginData<{
+    strategies: Array<{ id: string; text: string; set_by_name: string | null }>;
+    policies: Array<{ id: string; title: string; domain: string | null; description: string }>;
+    checklists: Array<{ id: string; item_text: string; role_name: string | null; frequency: string }>;
+    metrics: Array<{ id: string; name: string; unit: string | null; role_name: string | null; frequency: string }>;
+  } | null>("circle-governance", { circleId: expandedCircle ?? "" });
+
+  if (!companyId || !summary) {
+    return <div style={{ padding: "8px 12px", fontSize: 13, color: "#9ca3af" }}>Circles</div>;
+  }
+
+  const totalStrategies = summary.reduce((s, c) => s + c.strategiesCount, 0);
+  const totalPolicies = summary.reduce((s, c) => s + c.policiesCount, 0);
+  const totalChecklists = summary.reduce((s, c) => s + c.checklistsCount, 0);
+  const totalMetrics = summary.reduce((s, c) => s + c.metricsCount, 0);
+
+  return (
+    <div style={{ fontSize: 13 }}>
+      <div style={{ padding: "10px 12px", borderBottom: "1px solid #f0f0f0" }}>
+        <div style={{ fontWeight: 600, color: "#374151", marginBottom: 6 }}>Governance</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px", fontSize: 11, color: "#6b7280" }}>
+          <span>{totalStrategies} strategies</span>
+          <span>{totalPolicies} policies</span>
+          <span>{totalChecklists} checklists</span>
+          <span>{totalMetrics} metrics</span>
+        </div>
+      </div>
+      {summary.map((circle) => (
+        <div key={circle.id}>
+          <div
+            onClick={() => setExpandedCircle(expandedCircle === circle.id ? null : circle.id)}
+            style={{
+              padding: "8px 12px", cursor: "pointer",
+              borderBottom: "1px solid #f5f5f5",
+              background: expandedCircle === circle.id ? "#f8fafc" : "transparent",
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: "50%",
+                background: circle.color || "#6b7280", display: "inline-block",
+              }} />
+              <span style={{ fontWeight: 500, color: "#374151" }}>{circle.name}</span>
+            </div>
+            <span style={{ fontSize: 10, color: "#9ca3af" }}>
+              {expandedCircle === circle.id ? "v" : ">"}
+            </span>
+          </div>
+          {expandedCircle === circle.id && governance && (
+            <div style={{ padding: "4px 12px 8px 28px", background: "#f8fafc", borderBottom: "1px solid #f0f0f0" }}>
+              {governance.strategies.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", marginBottom: 3 }}>Strategy</div>
+                  {governance.strategies.map((s) => (
+                    <div key={s.id} style={{ fontSize: 12, color: "#374151", lineHeight: 1.4, marginBottom: 2 }}>
+                      {s.text}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {governance.policies.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", marginBottom: 3 }}>Policies</div>
+                  {governance.policies.map((p) => (
+                    <div key={p.id} style={{ fontSize: 12, color: "#374151", marginBottom: 3 }}>
+                      <span style={{ fontWeight: 500 }}>{p.title}</span>
+                      {p.domain && <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: 4 }}>({p.domain})</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {governance.checklists.length > 0 && (
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", marginBottom: 3 }}>Checklists</div>
+                  {governance.checklists.map((cl) => (
+                    <div key={cl.id} style={{ fontSize: 12, color: "#374151", marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+                      <span>{cl.item_text}</span>
+                      <span style={{ fontSize: 10, color: "#9ca3af", whiteSpace: "nowrap", marginLeft: 4 }}>{cl.frequency}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {governance.metrics.length > 0 && (
+                <div style={{ marginBottom: 4 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", marginBottom: 3 }}>Metrics</div>
+                  {governance.metrics.map((m) => (
+                    <div key={m.id} style={{ fontSize: 12, color: "#374151", marginBottom: 2, display: "flex", justifyContent: "space-between" }}>
+                      <span>{m.name}</span>
+                      <span style={{ fontSize: 10, color: "#9ca3af", whiteSpace: "nowrap", marginLeft: 4 }}>{m.unit ?? ""} {m.frequency}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {circle.domains && circle.domains.length > 0 && (
+                <div style={{ marginBottom: 4 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", marginBottom: 3 }}>Domains</div>
+                  {circle.domains.map((d: string, i: number) => (
+                    <div key={i} style={{ fontSize: 12, color: "#374151", marginBottom: 1 }}>{d}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function AgentRoleTab() {
@@ -473,7 +590,98 @@ export function AgentRoleTab() {
 }
 
 export function CircleDetailTab() {
-  return <div style={{ padding: 16 }}><p style={{ color: "#9ca3af" }}>Circle governance and roles will appear here.</p></div>;
+  const hostCtx = useHostContext();
+  const entityId = hostCtx?.entityId ?? null;
+
+  const { data: governance, loading } = usePluginData<{
+    strategies: Array<{ id: string; text: string; set_by_name: string | null; created_at: string }>;
+    policies: Array<{ id: string; title: string; domain: string | null; description: string }>;
+    checklists: Array<{ id: string; item_text: string; role_name: string | null; frequency: string }>;
+    metrics: Array<{ id: string; name: string; unit: string | null; role_name: string | null; frequency: string }>;
+  } | null>("circle-governance", { circleId: entityId ?? "" });
+
+  if (loading) return <div style={{ padding: 16, color: "#9ca3af" }}>Loading governance data...</div>;
+  if (!governance) return <div style={{ padding: 16, color: "#9ca3af" }}>No governance data found for this circle.</div>;
+
+  const sectionHeader: React.CSSProperties = {
+    fontSize: 12, fontWeight: 600, color: "#6b7280", textTransform: "uppercase",
+    letterSpacing: "0.05em", marginBottom: 8, marginTop: 20,
+  };
+  const card: React.CSSProperties = {
+    padding: "10px 14px", background: "#f9fafb", borderRadius: 6,
+    border: "1px solid #f0f0f0", marginBottom: 6,
+  };
+
+  return (
+    <div style={{ padding: 16 }}>
+      {governance.strategies.length > 0 && (
+        <>
+          <div style={{ ...sectionHeader, marginTop: 0 }}>Strategies</div>
+          {governance.strategies.map((s) => (
+            <div key={s.id} style={card}>
+              <div style={{ fontSize: 14, color: "#111827", fontWeight: 500, lineHeight: 1.5 }}>{s.text}</div>
+              {s.set_by_name && <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>Set by {s.set_by_name}</div>}
+            </div>
+          ))}
+        </>
+      )}
+
+      {governance.policies.length > 0 && (
+        <>
+          <div style={sectionHeader}>Policies</div>
+          {governance.policies.map((p) => (
+            <div key={p.id} style={card}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <div style={{ fontSize: 14, color: "#111827", fontWeight: 500 }}>{p.title}</div>
+                {p.domain && <span style={{ fontSize: 10, color: "#9ca3af", background: "#f3f4f6", padding: "1px 6px", borderRadius: 3 }}>{p.domain}</span>}
+              </div>
+              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4, lineHeight: 1.5 }}>{p.description}</div>
+            </div>
+          ))}
+        </>
+      )}
+
+      {governance.checklists.length > 0 && (
+        <>
+          <div style={sectionHeader}>Checklists</div>
+          {governance.checklists.map((cl) => (
+            <div key={cl.id} style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 13, color: "#111827" }}>{cl.item_text}</div>
+                {cl.role_name && <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{cl.role_name}</div>}
+              </div>
+              <span style={{
+                fontSize: 10, color: cl.frequency === "daily" ? "#059669" : "#6b7280",
+                background: cl.frequency === "daily" ? "#ecfdf5" : "#f3f4f6",
+                padding: "2px 6px", borderRadius: 3, fontWeight: 500,
+              }}>{cl.frequency}</span>
+            </div>
+          ))}
+        </>
+      )}
+
+      {governance.metrics.length > 0 && (
+        <>
+          <div style={sectionHeader}>Metrics</div>
+          {governance.metrics.map((m) => (
+            <div key={m.id} style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 13, color: "#111827" }}>{m.name}</div>
+                {m.role_name && <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{m.role_name}</div>}
+              </div>
+              <div style={{ textAlign: "right" }}>
+                {m.unit && <span style={{ fontSize: 11, color: "#6b7280", marginRight: 6 }}>{m.unit}</span>}
+                <span style={{
+                  fontSize: 10, color: "#6b7280", background: "#f3f4f6",
+                  padding: "2px 6px", borderRadius: 3,
+                }}>{m.frequency}</span>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
 }
 
 export function CircleHealthWidget() {

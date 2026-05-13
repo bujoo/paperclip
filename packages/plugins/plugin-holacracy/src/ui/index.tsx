@@ -244,7 +244,7 @@ export function CircleNavigator() {
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<{ role: CircleWithRoles["roles"][0]; x: number; y: number } | null>(null);
   const [hoveredCircle, setHoveredCircle] = useState<string | null>(null);
-  const [selectedCircleId, setSelectedCircleId] = useState<string | null>(null);
+  const [detailCircleId, setDetailCircleId] = useState<string | null>(null);
 
   const { data, loading, error } = usePluginData<CircleWithRoles[]>("circles-tree", {
     companyId: companyId ?? "",
@@ -264,26 +264,27 @@ export function CircleNavigator() {
   const breadcrumb = useMemo(() => buildBreadcrumb(tree, focusedId), [tree, focusedId]);
   const layout = useMemo(() => (rootNode ? computeLayout(rootNode) : null), [rootNode]);
 
-  const { data: govSummary } = usePluginData<Array<{
-    id: string; name: string; purpose: string | null; color: string | null; domains: string[];
-    strategiesCount: number; policiesCount: number; checklistsCount: number;
-    metricsCount: number; openTensionsCount: number;
-  }>>("governance-summary", { companyId: companyId ?? "" });
+  const detailCircle = useMemo(() => {
+    if (!detailCircleId || !data) return null;
+    return data.find(c => c.id === detailCircleId) ?? null;
+  }, [detailCircleId, data]);
 
   const { data: govDetail } = usePluginData<{
     strategies: Array<{ id: string; text: string; set_by_name: string | null }>;
     policies: Array<{ id: string; title: string; domain: string | null; description: string }>;
     checklists: Array<{ id: string; item_text: string; role_name: string | null; frequency: string }>;
     metrics: Array<{ id: string; name: string; unit: string | null; role_name: string | null; frequency: string }>;
-  } | null>("circle-governance", { circleId: selectedCircleId ?? "" });
+  } | null>("circle-governance", { circleId: detailCircleId ?? "" });
 
   const handleCircleClick = useCallback((e: React.MouseEvent, circleId: string) => {
     e.stopPropagation();
     e.preventDefault();
     setTooltip(null);
-    if (rootNode && circleId === rootNode.circle.id) return;
     const node = findNode(tree, circleId);
-    if (node && node.children.length > 0) {
+    if (!node) return;
+    if (node.children.length === 0) {
+      setDetailCircleId(circleId);
+    } else if (node.circle.id !== rootNode?.circle.id) {
       setFocusedId(circleId);
     }
   }, [tree, rootNode]);
@@ -308,6 +309,140 @@ export function CircleNavigator() {
     );
   }
   if (!layout) return null;
+
+  const sectionStyle: React.CSSProperties = {
+    fontSize: 12, fontWeight: 600, color: "#6b7280", textTransform: "uppercase",
+    letterSpacing: "0.05em", marginBottom: 10, marginTop: 28,
+  };
+  const cardStyle: React.CSSProperties = {
+    padding: "12px 16px", background: "#f9fafb", borderRadius: 8,
+    border: "1px solid #e5e7eb", marginBottom: 8,
+  };
+
+  if (detailCircle) {
+    return (
+      <div style={{ background: "#fff", borderRadius: 8, overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 10 }}>
+          <span
+            onClick={() => setDetailCircleId(null)}
+            style={{ color: LINK_BLUE, cursor: "pointer", fontSize: 13, fontWeight: 500 }}
+          >
+            All Circles
+          </span>
+          <span style={{ color: "#ccc" }}>/</span>
+          <span style={{ color: TEXT_DARK, fontWeight: 600, fontSize: 14 }}>{detailCircle.name}</span>
+        </div>
+
+        <div style={{ padding: "24px 32px", maxWidth: 900 }}>
+          {detailCircle.purpose && (
+            <div style={{ fontSize: 15, color: "#374151", lineHeight: 1.6, marginBottom: 8 }}>
+              {detailCircle.purpose}
+            </div>
+          )}
+
+          {govDetail && govDetail.strategies.length > 0 && (
+            <div style={{ padding: "14px 18px", background: "#f0fdf4", borderRadius: 8, border: "1px solid #bbf7d0", marginBottom: 24 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#166534", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Strategy</div>
+              {govDetail.strategies.map((s) => (
+                <div key={s.id} style={{ fontSize: 15, color: "#111827", fontWeight: 500, lineHeight: 1.5 }}>
+                  {s.text}
+                  {s.set_by_name && <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 400, marginLeft: 8 }}>-- {s.set_by_name}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ ...sectionStyle, marginTop: 0 }}>Roles ({detailCircle.roles.length})</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {detailCircle.roles.map((role) => (
+              <div key={role.id} style={cardStyle}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>{role.name}</span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 500, padding: "2px 8px", borderRadius: 4,
+                    background: role.agent_name ? "#e8f5e9" : "#fff3e0",
+                    color: role.agent_name ? "#2e7d32" : "#e65100",
+                  }}>{roleTypeLabel(role.role_type)}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.4, marginBottom: 6 }}>
+                  {role.purpose ?? "No purpose defined"}
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 500, color: role.agent_name ? "#374151" : "#e65100" }}>
+                  {role.agent_name ?? "Unassigned"}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {detailCircle.domains && (detailCircle.domains as string[]).length > 0 && (
+            <>
+              <div style={sectionStyle}>Domains ({(detailCircle.domains as string[]).length})</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {(detailCircle.domains as string[]).map((d, i) => (
+                  <span key={i} style={{ fontSize: 13, color: "#374151", background: "#f3f4f6", padding: "6px 14px", borderRadius: 6, border: "1px solid #e5e7eb" }}>{d}</span>
+                ))}
+              </div>
+            </>
+          )}
+
+          {govDetail && govDetail.policies.length > 0 && (
+            <>
+              <div style={sectionStyle}>Policies ({govDetail.policies.length})</div>
+              {govDetail.policies.map((p) => (
+                <div key={p.id} style={cardStyle}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>{p.title}</span>
+                    {p.domain && <span style={{ fontSize: 11, color: "#6b7280", background: "#e5e7eb", padding: "2px 8px", borderRadius: 4 }}>{p.domain}</span>}
+                  </div>
+                  <div style={{ fontSize: 13, color: "#374151", lineHeight: 1.6 }}>{p.description}</div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {govDetail && (govDetail.checklists.length > 0 || govDetail.metrics.length > 0) && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginTop: 8 }}>
+              {govDetail.checklists.length > 0 && (
+                <div>
+                  <div style={sectionStyle}>Checklists ({govDetail.checklists.length})</div>
+                  {govDetail.checklists.map((cl) => (
+                    <div key={cl.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 14px", background: "#f9fafb", borderRadius: 6, border: "1px solid #e5e7eb", marginBottom: 6 }}>
+                      <div>
+                        <div style={{ fontSize: 13, color: "#111827" }}>{cl.item_text}</div>
+                        {cl.role_name && <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{cl.role_name}</div>}
+                      </div>
+                      <span style={{
+                        fontSize: 11, padding: "2px 8px", borderRadius: 4, fontWeight: 500, whiteSpace: "nowrap",
+                        background: cl.frequency === "daily" ? "#ecfdf5" : "#f3f4f6",
+                        color: cl.frequency === "daily" ? "#059669" : "#6b7280",
+                      }}>{cl.frequency}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {govDetail.metrics.length > 0 && (
+                <div>
+                  <div style={sectionStyle}>Metrics ({govDetail.metrics.length})</div>
+                  {govDetail.metrics.map((m) => (
+                    <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 14px", background: "#f9fafb", borderRadius: 6, border: "1px solid #e5e7eb", marginBottom: 6 }}>
+                      <div>
+                        <div style={{ fontSize: 13, color: "#111827" }}>{m.name}</div>
+                        {m.role_name && <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{m.role_name}</div>}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        {m.unit && <span style={{ fontSize: 12, color: "#374151", fontWeight: 500 }}>{m.unit}</span>}
+                        <span style={{ fontSize: 11, color: "#6b7280", background: "#f3f4f6", padding: "2px 8px", borderRadius: 4 }}>{m.frequency}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ background: "#fff", borderRadius: 8, overflow: "hidden" }}>
@@ -376,12 +511,12 @@ export function CircleNavigator() {
                 stroke={CIRCLE_STROKE}
                 strokeWidth={1.5}
                 style={{
-                  cursor: lc.node.children.length > 0 && lc.node.circle.id !== rootNode?.circle.id ? "pointer" : "default",
+                  cursor: "pointer",
                   opacity: hoveredCircle === lc.node.circle.id ? 0.85 : 1,
                   transition: "opacity 0.15s",
                 }}
                 onClick={(e) => handleCircleClick(e, lc.node.circle.id)}
-                onMouseEnter={() => lc.node.children.length > 0 && setHoveredCircle(lc.node.circle.id)}
+                onMouseEnter={() => setHoveredCircle(lc.node.circle.id)}
                 onMouseLeave={() => setHoveredCircle(null)}
               />
             ))}
@@ -474,105 +609,6 @@ export function CircleNavigator() {
           </div>
         )}
       </div>
-
-      {govSummary && govSummary.length > 0 && (
-        <div style={{ borderTop: "1px solid #e5e7eb", padding: "16px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
-            {govSummary.map((circle) => (
-              <div
-                key={circle.id}
-                onClick={() => setSelectedCircleId(selectedCircleId === circle.id ? null : circle.id)}
-                style={{
-                  border: selectedCircleId === circle.id ? "1.5px solid #60afd8" : "1px solid #e5e7eb",
-                  borderRadius: 8, padding: "12px 16px", cursor: "pointer",
-                  background: selectedCircleId === circle.id ? "#f0f9ff" : "#fff",
-                  transition: "all 0.15s",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: circle.color || "#6b7280", display: "inline-block" }} />
-                  <span style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>{circle.name}</span>
-                </div>
-                {circle.purpose && (
-                  <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8, lineHeight: 1.4 }}>{circle.purpose}</div>
-                )}
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {circle.strategiesCount > 0 && <span style={{ fontSize: 11, background: "#f0fdf4", color: "#166534", padding: "2px 8px", borderRadius: 10 }}>{circle.strategiesCount} strategies</span>}
-                  {circle.policiesCount > 0 && <span style={{ fontSize: 11, background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 10 }}>{circle.policiesCount} policies</span>}
-                  {circle.checklistsCount > 0 && <span style={{ fontSize: 11, background: "#ede9fe", color: "#5b21b6", padding: "2px 8px", borderRadius: 10 }}>{circle.checklistsCount} checklists</span>}
-                  {circle.metricsCount > 0 && <span style={{ fontSize: 11, background: "#e0f2fe", color: "#075985", padding: "2px 8px", borderRadius: 10 }}>{circle.metricsCount} metrics</span>}
-                  {circle.openTensionsCount > 0 && <span style={{ fontSize: 11, background: "#fef2f2", color: "#991b1b", padding: "2px 8px", borderRadius: 10 }}>{circle.openTensionsCount} tensions</span>}
-                </div>
-                {circle.domains && circle.domains.length > 0 && (
-                  <div style={{ marginTop: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {(circle.domains as string[]).map((d, i) => (
-                      <span key={i} style={{ fontSize: 10, color: "#6b7280", background: "#f3f4f6", padding: "1px 6px", borderRadius: 3 }}>{d}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {selectedCircleId && govDetail && (
-            <div style={{ marginTop: 16, border: "1px solid #e5e7eb", borderRadius: 8, padding: "16px", background: "#fafafa" }}>
-              {govDetail.strategies.length > 0 && (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Strategy</div>
-                  {govDetail.strategies.map((s) => (
-                    <div key={s.id} style={{ fontSize: 13, color: "#111827", lineHeight: 1.5, padding: "8px 12px", background: "#fff", borderRadius: 6, border: "1px solid #f0f0f0", marginBottom: 4 }}>
-                      {s.text}
-                      {s.set_by_name && <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 8 }}>-- {s.set_by_name}</span>}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {govDetail.policies.length > 0 && (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Policies</div>
-                  {govDetail.policies.map((p) => (
-                    <div key={p.id} style={{ padding: "8px 12px", background: "#fff", borderRadius: 6, border: "1px solid #f0f0f0", marginBottom: 4 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <span style={{ fontSize: 13, fontWeight: 500, color: "#111827" }}>{p.title}</span>
-                        {p.domain && <span style={{ fontSize: 10, color: "#9ca3af", background: "#f3f4f6", padding: "1px 6px", borderRadius: 3 }}>{p.domain}</span>}
-                      </div>
-                      <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4, lineHeight: 1.4 }}>{p.description}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                {govDetail.checklists.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Checklists</div>
-                    {govDetail.checklists.map((cl) => (
-                      <div key={cl.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: "#fff", borderRadius: 4, border: "1px solid #f0f0f0", marginBottom: 3, fontSize: 12 }}>
-                        <span style={{ color: "#374151" }}>{cl.item_text}</span>
-                        <span style={{
-                          fontSize: 10, padding: "1px 6px", borderRadius: 3, whiteSpace: "nowrap", marginLeft: 6,
-                          background: cl.frequency === "daily" ? "#ecfdf5" : "#f3f4f6",
-                          color: cl.frequency === "daily" ? "#059669" : "#6b7280",
-                        }}>{cl.frequency} {cl.role_name ? `(${cl.role_name})` : ""}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {govDetail.metrics.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Metrics</div>
-                    {govDetail.metrics.map((m) => (
-                      <div key={m.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: "#fff", borderRadius: 4, border: "1px solid #f0f0f0", marginBottom: 3, fontSize: 12 }}>
-                        <span style={{ color: "#374151" }}>{m.name}</span>
-                        <span style={{ fontSize: 10, color: "#6b7280", whiteSpace: "nowrap", marginLeft: 6 }}>{m.unit ?? ""} {m.frequency} {m.role_name ? `(${m.role_name})` : ""}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

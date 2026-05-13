@@ -776,8 +776,9 @@ export function CircleNavigator() {
 }
 
 export function HolacracySidebar() {
+  const path = "/CH/circles";
   return (
-    <a href="/CH/circles" data-discover="true" style={{
+    <a href={path} onClick={(e) => { e.preventDefault(); window.history.pushState({}, "", path); window.dispatchEvent(new PopStateEvent("popstate")); }} style={{
       display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
       fontSize: 13, fontWeight: 500, color: "var(--foreground)", opacity: 0.8,
       textDecoration: "none", borderRadius: 4,

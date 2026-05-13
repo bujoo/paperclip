@@ -166,6 +166,39 @@ const plugin = definePlugin({
       return result;
     });
 
+    ctx.data.register("agent-role", async (params) => {
+      const agentId = params.agentId as string;
+      if (!agentId) return null;
+      const assignments = await ctx.db.query(
+        `SELECT ra.*, r.name as role_name, r.purpose as role_purpose, r.role_type, r.accountabilities, r.domains, c.id as circle_id, c.name as circle_name, c.purpose as circle_purpose FROM ${tbl("role_assignments")} ra JOIN ${tbl("roles")} r ON r.id = ra.role_id JOIN ${tbl("circles")} c ON c.id = r.circle_id WHERE ra.agent_id = $1`,
+        [agentId],
+      );
+      if (assignments.length === 0) return null;
+      const assignment = assignments[0];
+      const checklists = await ctx.db.query(
+        `SELECT * FROM ${tbl("checklists")} WHERE role_id = $1 ORDER BY frequency, created_at`,
+        [assignment.role_id],
+      );
+      const metrics = await ctx.db.query(
+        `SELECT * FROM ${tbl("metrics")} WHERE role_id = $1 ORDER BY frequency, created_at`,
+        [assignment.role_id],
+      );
+      const tensions = await ctx.db.query(
+        `SELECT * FROM ${tbl("tensions")} WHERE circle_id = $1 AND source_agent_id = $2 AND status = 'open' ORDER BY created_at DESC LIMIT 5`,
+        [assignment.circle_id, agentId],
+      );
+      return { ...assignment, checklists, metrics, tensions };
+    });
+
+    ctx.data.register("circle-audit-log", async (params) => {
+      const circleId = params.circleId as string;
+      if (!circleId) return [];
+      return ctx.db.query(
+        `SELECT al.*, a.name as agent_name FROM ${tbl("audit_log")} al LEFT JOIN public.agents a ON a.id = al.agent_id WHERE al.circle_id = $1 ORDER BY al.created_at DESC LIMIT 20`,
+        [circleId],
+      );
+    });
+
     ctx.tools.register(
       TOOL_NAMES.getCircle,
       { displayName: "Get Holacracy Circle", description: "Get a circle's structure including purpose, roles, sub-circles, and policies", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },
@@ -428,6 +461,7 @@ ${policyList || "No policies defined yet."}
   },
 
   async onApiRequest(input: PluginApiRequestInput) {
+    try {
     switch (input.routeKey) {
       case API_ROUTES.listCircles: {
         const companyId = input.companyId;
@@ -784,6 +818,9 @@ ${policyList || "No policies defined yet."}
 
       default:
         return { status: 404, body: { error: "Unknown route" } };
+    }
+    } catch (err) {
+      return { status: 500, body: { error: err instanceof Error ? err.message : String(err) } };
     }
   },
 

@@ -280,6 +280,10 @@ export function CircleNavigator() {
     metrics: Array<{ id: string; name: string; unit: string | null; role_name: string | null; frequency: string }>;
   } | null>("circle-governance", { circleId: detailCircleId ?? "" });
 
+  const { data: auditLog } = usePluginData<Array<{
+    id: string; action_type: string; action_detail: any; agent_name: string | null; created_at: string;
+  }>>("circle-audit-log", { circleId: detailCircleId ?? "" });
+
   const handleCircleClick = useCallback((e: React.MouseEvent, circleId: string) => {
     e.stopPropagation();
     e.preventDefault();
@@ -486,6 +490,29 @@ export function CircleNavigator() {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {auditLog && auditLog.length > 0 && (
+                <div>
+                  <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0", color: "var(--foreground)" }}>Activity</h3>
+                  <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+                    {auditLog.map((log: any, i: number) => (
+                      <div key={log.id} style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        padding: "8px 12px", fontSize: 13,
+                        borderBottom: i < auditLog.length - 1 ? "1px solid var(--border)" : "none",
+                      }}>
+                        <div>
+                          <span style={{ color: "var(--foreground)", fontWeight: 500 }}>{log.action_type.replace(/-/g, " ")}</span>
+                          {log.agent_name && <span style={{ color: "var(--muted-foreground)", marginLeft: 6, fontSize: 12 }}>by {log.agent_name}</span>}
+                        </div>
+                        <span style={{ fontSize: 11, color: "var(--muted-foreground)" }}>
+                          {new Date(log.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -753,7 +780,125 @@ export function HolacracySidebar() {
 }
 
 export function AgentRoleTab() {
-  return <div style={{ padding: 16 }}><p style={{ color: "var(--muted-foreground)" }}>Holacracy role details will appear here.</p></div>;
+  const hostCtx = useHostContext();
+  const agentId = hostCtx?.entityId ?? null;
+
+  const { data: roleData, loading } = usePluginData<{
+    role_name: string; role_purpose: string; role_type: string;
+    accountabilities: string[]; domains: string[];
+    circle_id: string; circle_name: string; circle_purpose: string;
+    checklists: Array<{ id: string; item_text: string; frequency: string }>;
+    metrics: Array<{ id: string; name: string; unit: string | null; frequency: string }>;
+    tensions: Array<{ id: string; title: string; tension_type: string; status: string }>;
+  } | null>("agent-role", { agentId: agentId ?? "" });
+
+  if (loading) return <div style={{ padding: 16, color: "var(--muted-foreground)" }}>Loading role data...</div>;
+  if (!roleData) return <div style={{ padding: 16, color: "var(--muted-foreground)" }}>This agent has no Holacracy role assigned.</div>;
+
+  return (
+    <div style={{ padding: 16, display: "flex", flexDirection: "column" as const, gap: 20 }}>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <span style={{ fontSize: 18, fontWeight: 600, color: "var(--foreground)" }}>{roleData.role_name}</span>
+          <span style={{
+            fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 9999,
+            background: "color-mix(in oklch, #60afd8 15%, transparent)", color: "#60afd8",
+          }}>{roleData.circle_name}</span>
+        </div>
+        {roleData.role_purpose && <div style={{ fontSize: 13, color: "var(--muted-foreground)", lineHeight: 1.5 }}>{roleData.role_purpose}</div>}
+      </div>
+
+      {roleData.accountabilities && roleData.accountabilities.length > 0 && (
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0", color: "var(--foreground)" }}>Accountabilities</h3>
+          <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+            {roleData.accountabilities.map((a: string, i: number) => (
+              <div key={i} style={{
+                padding: "8px 12px", fontSize: 13, color: "var(--foreground)",
+                borderBottom: i < roleData.accountabilities.length - 1 ? "1px solid var(--border)" : "none",
+              }}>{a}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {roleData.domains && roleData.domains.length > 0 && (
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0", color: "var(--foreground)" }}>Domains</h3>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {roleData.domains.map((d: string, i: number) => (
+              <span key={i} style={{
+                fontSize: 12, padding: "4px 12px", borderRadius: 9999,
+                border: "1px solid var(--border)", background: "var(--accent)", color: "var(--foreground)",
+              }}>{d}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {roleData.checklists && roleData.checklists.length > 0 && (
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0", color: "var(--foreground)" }}>Checklists</h3>
+          <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+            {roleData.checklists.map((cl: any, i: number) => (
+              <div key={cl.id} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "8px 12px", fontSize: 13,
+                borderBottom: i < roleData.checklists.length - 1 ? "1px solid var(--border)" : "none",
+              }}>
+                <span style={{ color: "var(--foreground)" }}>{cl.item_text}</span>
+                <span style={{
+                  fontSize: 11, padding: "2px 8px", borderRadius: 9999,
+                  background: cl.frequency === "daily" ? "color-mix(in oklch, #10b981 15%, transparent)" : "var(--muted)",
+                  color: cl.frequency === "daily" ? "#34d399" : "var(--muted-foreground)",
+                }}>{cl.frequency}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {roleData.metrics && roleData.metrics.length > 0 && (
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0", color: "var(--foreground)" }}>Metrics</h3>
+          <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+            {roleData.metrics.map((m: any, i: number) => (
+              <div key={m.id} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "8px 12px", fontSize: 13,
+                borderBottom: i < roleData.metrics.length - 1 ? "1px solid var(--border)" : "none",
+              }}>
+                <span style={{ color: "var(--foreground)" }}>{m.name}</span>
+                <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{m.unit ?? ""} {m.frequency}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {roleData.tensions && roleData.tensions.length > 0 && (
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 500, margin: "0 0 8px 0", color: "var(--foreground)" }}>Open Tensions</h3>
+          <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+            {roleData.tensions.map((t: any, i: number) => (
+              <div key={t.id} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "8px 12px", fontSize: 13,
+                borderBottom: i < roleData.tensions.length - 1 ? "1px solid var(--border)" : "none",
+              }}>
+                <span style={{ color: "var(--foreground)" }}>{t.title}</span>
+                <span style={{
+                  fontSize: 11, padding: "2px 8px", borderRadius: 9999,
+                  background: t.tension_type === "governance" ? "color-mix(in oklch, #f59e0b 15%, transparent)" : "color-mix(in oklch, #3b82f6 15%, transparent)",
+                  color: t.tension_type === "governance" ? "#fbbf24" : "#60a5fa",
+                }}>{t.tension_type}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function CircleDetailTab() {
@@ -852,7 +997,50 @@ export function CircleDetailTab() {
 }
 
 export function CircleHealthWidget() {
-  return <div style={{ padding: 16 }}><h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Circle Health</h3><p style={{ color: "var(--muted-foreground)", fontSize: 13 }}>No circles configured yet.</p></div>;
+  const hostCtx = useHostContext();
+  const companyId = hostCtx?.companyId ?? null;
+
+  const { data: summary } = usePluginData<Array<{
+    id: string; name: string; color: string | null;
+    strategiesCount: number; policiesCount: number;
+    checklistsCount: number; metricsCount: number; openTensionsCount: number;
+  }>>("governance-summary", { companyId: companyId ?? "" });
+
+  if (!summary || summary.length === 0) {
+    return <div style={{ padding: 16 }}><h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: "var(--foreground)" }}>Circle Health</h3><p style={{ color: "var(--muted-foreground)", fontSize: 13 }}>No circles configured yet.</p></div>;
+  }
+
+  const totalTensions = summary.reduce((s, c) => s + c.openTensionsCount, 0);
+
+  return (
+    <div style={{ padding: 16 }}>
+      <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: "var(--foreground)" }}>Circle Health</h3>
+      <div style={{ display: "flex", gap: 16, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: "var(--foreground)" }}>{summary.length}</div>
+          <div style={{ fontSize: 11, color: "var(--muted-foreground)" }}>circles</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: totalTensions > 0 ? "#f97316" : "var(--foreground)" }}>{totalTensions}</div>
+          <div style={{ fontSize: 11, color: "var(--muted-foreground)" }}>open tensions</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column" as const, gap: 6 }}>
+        {summary.map((c) => (
+          <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: c.color || "var(--muted-foreground)", display: "inline-block" }} />
+              <span style={{ color: "var(--foreground)" }}>{c.name}</span>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {c.openTensionsCount > 0 && <span style={{ fontSize: 11, color: "#f97316" }}>{c.openTensionsCount} tensions</span>}
+              <span style={{ fontSize: 11, color: "var(--muted-foreground)" }}>{c.policiesCount}p {c.checklistsCount}cl {c.metricsCount}m</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function HolacracySettings() {

@@ -491,7 +491,7 @@ export function CircleNavigator() {
             </div>
           </div>
 
-          <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid var(--border)", padding: 16 }}>
+          <div style={{ width: 280, flexShrink: 0, padding: 16 }}>
             {layout && (
               <div style={{ marginBottom: 16 }}>
                 <svg viewBox="0 -15 1000 1030" style={{ width: "100%", height: 200, display: "block" }}>

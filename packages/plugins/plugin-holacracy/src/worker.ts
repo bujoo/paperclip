@@ -335,6 +335,96 @@ const plugin = definePlugin({
         return { content: JSON.stringify({ reported: true, metricId, value, periodDate }) };
       },
     );
+
+    ctx.tools.register(
+      TOOL_NAMES.onboardAgent,
+      { displayName: "Onboard Agent", description: "Create a custom role in a circle and prepare onboarding. Circle Lead only.", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, agentName: { type: "string" }, roleName: { type: "string" }, rolePurpose: { type: "string" }, roleAccountabilities: { type: "array", items: { type: "string" } }, roleDomains: { type: "array", items: { type: "string" } } }, required: ["circleId", "agentName", "roleName", "rolePurpose"] } },
+      async (params, runCtx): Promise<ToolResult> => {
+        const { circleId, agentName, roleName, rolePurpose, roleAccountabilities, roleDomains } = params as {
+          circleId: string; agentName: string; roleName: string; rolePurpose: string;
+          roleAccountabilities?: string[]; roleDomains?: string[];
+        };
+        const circles = await dbCtx!.query<Circle>(`SELECT * FROM ${tbl("circles")} WHERE id = $1`, [circleId]);
+        if (circles.length === 0) return { content: "Circle not found", error: "not found" };
+        const circle = circles[0];
+        const roleId = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("roles")} (id, circle_id, name, purpose, role_type, accountabilities, domains) VALUES ($1, $2, $3, $4, 'custom', $5, $6)`,
+          [roleId, circleId, roleName, rolePurpose, JSON.stringify(roleAccountabilities ?? []), JSON.stringify(roleDomains ?? [])],
+        );
+        const strategies = await dbCtx!.query(`SELECT s.text, a.name as set_by_name FROM ${tbl("strategies")} s LEFT JOIN public.agents a ON a.id = s.set_by WHERE s.circle_id = $1 AND s.active = true`, [circleId]);
+        const policies = await dbCtx!.query(`SELECT title, domain, description FROM ${tbl("policies")} WHERE circle_id = $1`, [circleId]);
+        const roles = await dbCtx!.query(`SELECT r.name, r.purpose, r.role_type, a.name as agent_name FROM ${tbl("roles")} r LEFT JOIN ${tbl("role_assignments")} ra ON ra.role_id = r.id LEFT JOIN public.agents a ON a.id = ra.agent_id WHERE r.circle_id = $1 ORDER BY r.role_type, r.name`, [circleId]);
+        const teamList = roles.map((r: any) => `- ${r.agent_name ?? "(vacant)"}: ${r.name} -- ${r.purpose ?? ""}`).join("\n");
+        const strategyText = strategies.length > 0 ? (strategies[0] as any).text : "No strategy set";
+        const policyList = policies.map((p: any) => `- ${p.title}${p.domain ? ` (${p.domain})` : ""}: ${p.description}`).join("\n");
+        const holacracyRoleMd = `# Holacracy Role: ${roleName}
+## Circle: ${circle.name}
+**Circle Purpose:** ${circle.purpose ?? ""}
+
+## Your Role
+**Role Purpose:** ${rolePurpose}
+You fill the ${roleName} role in the ${circle.name} circle.
+
+## Accountabilities
+${(roleAccountabilities ?? []).map(a => `- ${a}`).join("\n") || "- (none defined yet)"}
+
+## Authority & Constraints
+- You MAY act autonomously within your role's accountabilities
+- You CANNOT modify governance -- raise governance tensions instead
+- You CANNOT act on domains owned by other roles without permission
+
+## AI Agent Protocol
+- Act only within your role's scope. Escalate anything outside it.
+- Every action is logged. Act transparently.
+- Your role can be modified through governance. You do not modify your own role.
+- Use holacracy-get-circle and holacracy-get-role tools to understand org context before acting.
+- Principle: "Prompts reference the org map. The org map does not reference prompts."
+
+## Tensions
+A tension = gap between current reality and potential you see for your role.
+- Operational: things you need to get work done. Raise via holacracy-raise-tension with type "operational".
+- Governance: structural issues about roles/accountabilities/policies. Raise with type "governance".
+
+## Two-Tier Authority
+- **Operational decisions** within your role scope: act autonomously, no approval needed.
+- **Structural changes** (modifying roles, domains, policies): raise as governance tension for human review.
+
+## Your Circle Team
+${teamList}
+
+## Active Strategy
+"${strategyText}"
+All operational decisions should align with this strategy.
+
+## Relevant Policies
+${policyList || "No policies defined yet."}
+
+## Error Protocol
+1. Log the action via holacracy-log-action with actionType "escalation"
+2. If the error was within your role scope: fix it and document what happened
+3. If the error was structural (your role definition was inadequate): raise a governance tension
+4. The audit trail is your protection -- transparent logging demonstrates good faith`;
+
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, 'agent-onboarded', $4)`,
+          [circle.company_id, runCtx.agentId ?? null, circleId, JSON.stringify({ roleId, roleName, agentName, rolePurpose })],
+        );
+        return { content: JSON.stringify({
+          roleId,
+          roleName,
+          circleId,
+          circleName: circle.name,
+          agentName,
+          holacracyRoleMd,
+          nextSteps: [
+            `1. Create agent "${agentName}" using paperclip-create-agent skill`,
+            `2. Assign agent to role: PATCH /api/plugins/paperclipai.plugin-holacracy/api/circles/${circleId}/roles/${roleId}/assign with {"companyId":"${circle.company_id}","agentId":"<new-agent-id>"}`,
+            `3. Push holacracy-role.md: PUT /api/agents/<new-agent-id>/instructions-bundle/file with {"path":"holacracy-role.md","content":"<the holacracyRoleMd above>"}`,
+          ],
+        }, null, 2) };
+      },
+    );
   },
 
   async onApiRequest(input: PluginApiRequestInput) {
@@ -665,6 +755,31 @@ const plugin = definePlugin({
         vals.push(strategyId);
         await dbCtx!.execute(`UPDATE ${tbl("strategies")} SET ${sets.join(", ")} WHERE id = $${idx}`, vals);
         return { status: 200, body: { strategyId, updated: true } };
+      }
+
+      case API_ROUTES.onboardAgent: {
+        const circleId = input.params.circleId as string;
+        const { agentId, roleName, rolePurpose, roleAccountabilities, roleDomains } = input.body as {
+          agentId?: string; roleName: string; rolePurpose: string;
+          roleAccountabilities?: string[]; roleDomains?: string[];
+          companyId: string;
+        };
+        const roleId = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("roles")} (id, circle_id, name, purpose, role_type, accountabilities, domains) VALUES ($1, $2, $3, $4, 'custom', $5, $6)`,
+          [roleId, circleId, roleName, rolePurpose, JSON.stringify(roleAccountabilities ?? []), JSON.stringify(roleDomains ?? [])],
+        );
+        if (agentId) {
+          await dbCtx!.execute(
+            `INSERT INTO ${tbl("role_assignments")} (id, role_id, agent_id) VALUES ($1, $2, $3)`,
+            [randomUUID(), roleId, agentId],
+          );
+        }
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("audit_log")} (company_id, circle_id, action_type, action_detail) VALUES ($1, $2, 'agent-onboarded', $3)`,
+          [input.companyId, circleId, JSON.stringify({ roleId, roleName, agentId, rolePurpose })],
+        );
+        return { status: 201, body: { roleId, roleName, circleId, agentId } };
       }
 
       default:

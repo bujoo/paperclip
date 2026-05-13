@@ -75,6 +75,7 @@ const manifest: PaperclipPluginManifestV1 = {
     { routeKey: "list-strategies", method: "GET", path: "/circles/:circleId/strategies", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
     { routeKey: "create-strategy", method: "POST", path: "/circles/:circleId/strategies", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "update-strategy", method: "PATCH", path: "/circles/:circleId/strategies/:strategyId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "onboard-agent", method: "POST", path: "/circles/:circleId/onboard-agent", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
   ],
   tools: [
     { name: "holacracy-get-circle", displayName: "Get Holacracy Circle", description: "Get a circle's structure including purpose, roles, sub-circles, and policies", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },
@@ -88,6 +89,7 @@ const manifest: PaperclipPluginManifestV1 = {
     { name: "holacracy-set-strategy", displayName: "Set Strategy", description: "Set a strategy for your circle (Circle Lead only)", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, text: { type: "string" } }, required: ["circleId", "text"] } },
     { name: "holacracy-report-checklist", displayName: "Report Checklist", description: "Report check/no-check on your recurring checklist items", parametersSchema: { type: "object", properties: { checklistId: { type: "string" }, checked: { type: "boolean" }, periodDate: { type: "string" } }, required: ["checklistId", "checked", "periodDate"] } },
     { name: "holacracy-report-metric", displayName: "Report Metric", description: "Report a metric value for the current period", parametersSchema: { type: "object", properties: { metricId: { type: "string" }, value: { type: "number" }, periodDate: { type: "string" } }, required: ["metricId", "value", "periodDate"] } },
+    { name: "holacracy-onboard-agent", displayName: "Onboard Agent", description: "Create a custom role in a circle and prepare onboarding instructions. Returns the role ID and a holacracy-role.md template for the new agent. Circle Lead only.", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, agentName: { type: "string" }, roleName: { type: "string" }, rolePurpose: { type: "string" }, roleAccountabilities: { type: "array", items: { type: "string" } }, roleDomains: { type: "array", items: { type: "string" } } }, required: ["circleId", "agentName", "roleName", "rolePurpose"] } },
   ],
   ui: {
     slots: [

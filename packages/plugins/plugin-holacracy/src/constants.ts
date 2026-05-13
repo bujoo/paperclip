@@ -49,6 +49,7 @@ export const TOOL_NAMES = {
   setStrategy: "holacracy-set-strategy",
   reportChecklist: "holacracy-report-checklist",
   reportMetric: "holacracy-report-metric",
+  onboardAgent: "holacracy-onboard-agent",
 } as const;
 
 export const API_ROUTES = {
@@ -78,4 +79,5 @@ export const API_ROUTES = {
   listStrategies: "list-strategies",
   createStrategy: "create-strategy",
   updateStrategy: "update-strategy",
+  onboardAgent: "onboard-agent",
 } as const;

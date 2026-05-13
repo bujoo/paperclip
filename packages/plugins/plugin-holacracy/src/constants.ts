@@ -45,6 +45,10 @@ export const TOOL_NAMES = {
   checkAuthority: "holacracy-check-authority",
   logAction: "holacracy-log-action",
   forwardTension: "holacracy-forward-tension",
+  listPolicies: "holacracy-list-policies",
+  setStrategy: "holacracy-set-strategy",
+  reportChecklist: "holacracy-report-checklist",
+  reportMetric: "holacracy-report-metric",
 } as const;
 
 export const API_ROUTES = {
@@ -61,4 +65,17 @@ export const API_ROUTES = {
   getAuditLog: "get-audit-log",
   recordDecision: "record-decision",
   forwardTension: "forward-tension",
+  listPolicies: "list-policies",
+  createPolicy: "create-policy",
+  updatePolicy: "update-policy",
+  deletePolicy: "delete-policy",
+  listChecklists: "list-checklists",
+  createChecklist: "create-checklist",
+  respondChecklist: "respond-checklist",
+  listMetrics: "list-metrics",
+  createMetric: "create-metric",
+  reportMetric: "report-metric",
+  listStrategies: "list-strategies",
+  createStrategy: "create-strategy",
+  updateStrategy: "update-strategy",
 } as const;

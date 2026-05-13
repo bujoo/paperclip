@@ -235,6 +235,58 @@ const plugin = definePlugin({
         return { content: JSON.stringify({ forwardedTensionId: forwardedId, targetCircleId: circles[0].parent_circle_id, status: "forwarded" }) };
       },
     );
+
+    ctx.tools.register(
+      TOOL_NAMES.listPolicies,
+      { displayName: "List Policies", description: "List policies governing a circle's domains", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },
+      async (params): Promise<ToolResult> => {
+        const { circleId } = params as { circleId: string };
+        const policies = await dbCtx!.query(`SELECT * FROM ${tbl("policies")} WHERE circle_id = $1 ORDER BY created_at DESC`, [circleId]);
+        return { content: JSON.stringify({ policies, count: policies.length }, null, 2) };
+      },
+    );
+
+    ctx.tools.register(
+      TOOL_NAMES.setStrategy,
+      { displayName: "Set Strategy", description: "Set a strategy for your circle (Circle Lead only)", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, text: { type: "string" } }, required: ["circleId", "text"] } },
+      async (params, runCtx): Promise<ToolResult> => {
+        const { circleId, text } = params as { circleId: string; text: string };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("strategies")} (id, circle_id, text, set_by) VALUES ($1, $2, $3, $4)`,
+          [id, circleId, text, runCtx.agentId ?? null],
+        );
+        return { content: JSON.stringify({ strategyId: id, text, status: "active" }) };
+      },
+    );
+
+    ctx.tools.register(
+      TOOL_NAMES.reportChecklist,
+      { displayName: "Report Checklist", description: "Report check/no-check on your recurring checklist items", parametersSchema: { type: "object", properties: { checklistId: { type: "string" }, checked: { type: "boolean" }, periodDate: { type: "string" } }, required: ["checklistId", "checked", "periodDate"] } },
+      async (params, runCtx): Promise<ToolResult> => {
+        const { checklistId, checked, periodDate } = params as { checklistId: string; checked: boolean; periodDate: string };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("checklist_responses")} (id, checklist_id, agent_id, checked, period_date) VALUES ($1, $2, $3, $4, $5)`,
+          [id, checklistId, runCtx.agentId ?? null, checked, periodDate],
+        );
+        return { content: JSON.stringify({ reported: true, checklistId, checked, periodDate }) };
+      },
+    );
+
+    ctx.tools.register(
+      TOOL_NAMES.reportMetric,
+      { displayName: "Report Metric", description: "Report a metric value for the current period", parametersSchema: { type: "object", properties: { metricId: { type: "string" }, value: { type: "number" }, periodDate: { type: "string" } }, required: ["metricId", "value", "periodDate"] } },
+      async (params, runCtx): Promise<ToolResult> => {
+        const { metricId, value, periodDate } = params as { metricId: string; value: number; periodDate: string };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("metric_values")} (id, metric_id, value, period_date, reported_by) VALUES ($1, $2, $3, $4, $5)`,
+          [id, metricId, value, periodDate, runCtx.agentId ?? null],
+        );
+        return { content: JSON.stringify({ reported: true, metricId, value, periodDate }) };
+      },
+    );
   },
 
   async onApiRequest(input: PluginApiRequestInput) {
@@ -427,6 +479,144 @@ const plugin = definePlugin({
           [id, input.companyId, agentId ?? null, roleId ?? null, circleId, JSON.stringify({ decision, context })],
         );
         return { status: 201, body: { id, actionType: "decision", decision } };
+      }
+
+      case API_ROUTES.listPolicies: {
+        const circleId = input.params.circleId as string;
+        const policies = await dbCtx!.query(
+          `SELECT * FROM ${tbl("policies")} WHERE circle_id = $1 ORDER BY created_at DESC`,
+          [circleId],
+        );
+        return { status: 200, body: policies };
+      }
+
+      case API_ROUTES.createPolicy: {
+        const circleId = input.params.circleId as string;
+        const { title, description, domain } = input.body as { title: string; description: string; domain?: string; companyId: string };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("policies")} (id, circle_id, title, description, domain) VALUES ($1, $2, $3, $4, $5)`,
+          [id, circleId, title, description, domain ?? null],
+        );
+        return { status: 201, body: { id, circleId, title, description, domain } };
+      }
+
+      case API_ROUTES.updatePolicy: {
+        const policyId = input.params.policyId as string;
+        const { title, description, domain } = input.body as { title?: string; description?: string; domain?: string; companyId: string };
+        const sets: string[] = [];
+        const vals: unknown[] = [];
+        let idx = 1;
+        if (title !== undefined) { sets.push(`title = $${idx++}`); vals.push(title); }
+        if (description !== undefined) { sets.push(`description = $${idx++}`); vals.push(description); }
+        if (domain !== undefined) { sets.push(`domain = $${idx++}`); vals.push(domain); }
+        if (sets.length === 0) return { status: 400, body: { error: "No fields to update" } };
+        sets.push(`updated_at = NOW()`);
+        vals.push(policyId);
+        await dbCtx!.execute(`UPDATE ${tbl("policies")} SET ${sets.join(", ")} WHERE id = $${idx}`, vals);
+        return { status: 200, body: { policyId, updated: true } };
+      }
+
+      case API_ROUTES.deletePolicy: {
+        const policyId = input.params.policyId as string;
+        await dbCtx!.execute(`DELETE FROM ${tbl("policies")} WHERE id = $1`, [policyId]);
+        return { status: 200, body: { deleted: policyId } };
+      }
+
+      case API_ROUTES.listChecklists: {
+        const circleId = input.params.circleId as string;
+        const checklists = await dbCtx!.query(
+          `SELECT cl.*, r.name as role_name FROM ${tbl("checklists")} cl LEFT JOIN ${tbl("roles")} r ON r.id = cl.role_id WHERE cl.circle_id = $1 ORDER BY cl.created_at`,
+          [circleId],
+        );
+        return { status: 200, body: checklists };
+      }
+
+      case API_ROUTES.createChecklist: {
+        const circleId = input.params.circleId as string;
+        const { itemText, roleId, frequency } = input.body as { itemText: string; roleId?: string; frequency?: string; companyId: string };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("checklists")} (id, circle_id, role_id, item_text, frequency) VALUES ($1, $2, $3, $4, $5)`,
+          [id, circleId, roleId ?? null, itemText, frequency ?? "weekly"],
+        );
+        return { status: 201, body: { id, circleId, itemText, frequency: frequency ?? "weekly" } };
+      }
+
+      case API_ROUTES.respondChecklist: {
+        const checklistId = input.params.checklistId as string;
+        const { checked, periodDate, agentId } = input.body as { checked: boolean; periodDate: string; agentId?: string; companyId: string };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("checklist_responses")} (id, checklist_id, agent_id, checked, period_date) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+          [id, checklistId, agentId ?? null, checked, periodDate],
+        );
+        return { status: 200, body: { checklistId, checked, periodDate } };
+      }
+
+      case API_ROUTES.listMetrics: {
+        const circleId = input.params.circleId as string;
+        const metrics = await dbCtx!.query(
+          `SELECT m.*, r.name as role_name FROM ${tbl("metrics")} m LEFT JOIN ${tbl("roles")} r ON r.id = m.role_id WHERE m.circle_id = $1 ORDER BY m.created_at`,
+          [circleId],
+        );
+        return { status: 200, body: metrics };
+      }
+
+      case API_ROUTES.createMetric: {
+        const circleId = input.params.circleId as string;
+        const { name, description, unit, roleId, frequency } = input.body as { name: string; description?: string; unit?: string; roleId?: string; frequency?: string; companyId: string };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("metrics")} (id, circle_id, role_id, name, description, unit, frequency) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [id, circleId, roleId ?? null, name, description ?? null, unit ?? null, frequency ?? "weekly"],
+        );
+        return { status: 201, body: { id, circleId, name, unit, frequency: frequency ?? "weekly" } };
+      }
+
+      case API_ROUTES.reportMetric: {
+        const metricId = input.params.metricId as string;
+        const { value, periodDate, reportedBy } = input.body as { value: number; periodDate: string; reportedBy?: string; companyId: string };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("metric_values")} (id, metric_id, value, period_date, reported_by) VALUES ($1, $2, $3, $4, $5)`,
+          [id, metricId, value, periodDate, reportedBy ?? null],
+        );
+        return { status: 201, body: { id, metricId, value, periodDate } };
+      }
+
+      case API_ROUTES.listStrategies: {
+        const circleId = input.params.circleId as string;
+        const strategies = await dbCtx!.query(
+          `SELECT s.*, a.name as set_by_name FROM ${tbl("strategies")} s LEFT JOIN public.agents a ON a.id = s.set_by WHERE s.circle_id = $1 AND s.active = true ORDER BY s.created_at DESC`,
+          [circleId],
+        );
+        return { status: 200, body: strategies };
+      }
+
+      case API_ROUTES.createStrategy: {
+        const circleId = input.params.circleId as string;
+        const { text, setBy } = input.body as { text: string; setBy?: string; companyId: string };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("strategies")} (id, circle_id, text, set_by) VALUES ($1, $2, $3, $4)`,
+          [id, circleId, text, setBy ?? null],
+        );
+        return { status: 201, body: { id, circleId, text } };
+      }
+
+      case API_ROUTES.updateStrategy: {
+        const strategyId = input.params.strategyId as string;
+        const { text, active } = input.body as { text?: string; active?: boolean; companyId: string };
+        const sets: string[] = [];
+        const vals: unknown[] = [];
+        let idx = 1;
+        if (text !== undefined) { sets.push(`text = $${idx++}`); vals.push(text); }
+        if (active !== undefined) { sets.push(`active = $${idx++}`); vals.push(active); }
+        if (sets.length === 0) return { status: 400, body: { error: "No fields to update" } };
+        vals.push(strategyId);
+        await dbCtx!.execute(`UPDATE ${tbl("strategies")} SET ${sets.join(", ")} WHERE id = $${idx}`, vals);
+        return { status: 200, body: { strategyId, updated: true } };
       }
 
       default:

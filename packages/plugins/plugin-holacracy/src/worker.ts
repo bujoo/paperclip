@@ -216,6 +216,19 @@ const plugin = definePlugin({
         return { status: 201, body: { roleId, roleName, circleId, agentId } };
       }
 
+      case "update-role-assignment": {
+        const roleId = input.params.roleId as string;
+        const { agentId } = input.body as { agentId: string | null; companyId: string };
+        await dbCtx!.execute(`DELETE FROM ${tbl("role_assignments")} WHERE role_id = $1`, [roleId]);
+        if (agentId) {
+          await dbCtx!.execute(
+            `INSERT INTO ${tbl("role_assignments")} (id, role_id, agent_id) VALUES ($1, $2, $3)`,
+            [randomUUID(), roleId, agentId],
+          );
+        }
+        return { status: 200, body: { roleId, agentId } };
+      }
+
       case "delete-circle": {
         const circleId = input.params.circleId as string;
         await dbCtx!.execute(`DELETE FROM ${tbl("tensions")} WHERE circle_id = $1`, [circleId]);

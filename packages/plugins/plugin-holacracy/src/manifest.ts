@@ -54,6 +54,7 @@ const manifest: PaperclipPluginManifestV1 = {
     { routeKey: "create-circle", method: "POST", path: "/circles", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "list-roles", method: "GET", path: "/circles/:circleId/roles", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
     { routeKey: "assign-role", method: "POST", path: "/circles/:circleId/roles", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "update-role-assignment", method: "PATCH", path: "/circles/:circleId/roles/:roleId/assign", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "delete-circle", method: "DELETE", path: "/circles/:circleId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
   ],
   tools: [

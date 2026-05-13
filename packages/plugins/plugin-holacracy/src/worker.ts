@@ -216,7 +216,55 @@ const plugin = definePlugin({
         return { status: 201, body: { roleId, roleName, circleId, agentId } };
       }
 
-      case "update-role-assignment": {
+      case API_ROUTES.updateRole: {
+        const circleId = input.params.circleId as string;
+        const roleId = input.params.roleId as string;
+        const { purpose, accountabilities, domains, name } = input.body as {
+          purpose?: string; accountabilities?: string[]; domains?: string[]; name?: string; companyId: string;
+        };
+        const sets: string[] = [];
+        const vals: unknown[] = [];
+        let idx = 1;
+        if (purpose !== undefined) { sets.push(`purpose = $${idx++}`); vals.push(purpose); }
+        if (name !== undefined) { sets.push(`name = $${idx++}`); vals.push(name); }
+        if (accountabilities !== undefined) { sets.push(`accountabilities = $${idx++}`); vals.push(JSON.stringify(accountabilities)); }
+        if (domains !== undefined) { sets.push(`domains = $${idx++}`); vals.push(JSON.stringify(domains)); }
+        if (sets.length === 0) return { status: 400, body: { error: "No fields to update" } };
+        sets.push(`updated_at = NOW()`);
+        vals.push(roleId, circleId);
+        await dbCtx!.execute(
+          `UPDATE ${tbl("roles")} SET ${sets.join(", ")} WHERE id = $${idx++} AND circle_id = $${idx}`,
+          vals,
+        );
+        const updated = await dbCtx!.query(`SELECT * FROM ${tbl("roles")} WHERE id = $1`, [roleId]);
+        return { status: 200, body: updated[0] ?? { error: "Role not found" } };
+      }
+
+      case API_ROUTES.updateCircle: {
+        const circleId = input.params.circleId as string;
+        const { purpose, name, color, domains, policies } = input.body as {
+          purpose?: string; name?: string; color?: string; domains?: unknown; policies?: unknown; companyId: string;
+        };
+        const sets: string[] = [];
+        const vals: unknown[] = [];
+        let idx = 1;
+        if (purpose !== undefined) { sets.push(`purpose = $${idx++}`); vals.push(purpose); }
+        if (name !== undefined) { sets.push(`name = $${idx++}`); vals.push(name); }
+        if (color !== undefined) { sets.push(`color = $${idx++}`); vals.push(color); }
+        if (domains !== undefined) { sets.push(`domains = $${idx++}`); vals.push(JSON.stringify(domains)); }
+        if (policies !== undefined) { sets.push(`policies = $${idx++}`); vals.push(JSON.stringify(policies)); }
+        if (sets.length === 0) return { status: 400, body: { error: "No fields to update" } };
+        sets.push(`updated_at = NOW()`);
+        vals.push(circleId);
+        await dbCtx!.execute(
+          `UPDATE ${tbl("circles")} SET ${sets.join(", ")} WHERE id = $${idx}`,
+          vals,
+        );
+        const updated = await dbCtx!.query(`SELECT * FROM ${tbl("circles")} WHERE id = $1`, [circleId]);
+        return { status: 200, body: updated[0] ?? { error: "Circle not found" } };
+      }
+
+      case API_ROUTES.updateRoleAssignment: {
         const roleId = input.params.roleId as string;
         const { agentId } = input.body as { agentId: string | null; companyId: string };
         await dbCtx!.execute(`DELETE FROM ${tbl("role_assignments")} WHERE role_id = $1`, [roleId]);
@@ -229,7 +277,7 @@ const plugin = definePlugin({
         return { status: 200, body: { roleId, agentId } };
       }
 
-      case "delete-circle": {
+      case API_ROUTES.deleteCircle: {
         const circleId = input.params.circleId as string;
         await dbCtx!.execute(`DELETE FROM ${tbl("tensions")} WHERE circle_id = $1`, [circleId]);
         await dbCtx!.execute(`DELETE FROM ${tbl("role_assignments")} WHERE role_id IN (SELECT id FROM ${tbl("roles")} WHERE circle_id = $1)`, [circleId]);

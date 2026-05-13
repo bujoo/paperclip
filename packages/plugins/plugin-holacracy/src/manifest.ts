@@ -56,6 +56,8 @@ const manifest: PaperclipPluginManifestV1 = {
     { routeKey: "assign-role", method: "POST", path: "/circles/:circleId/roles", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "update-role-assignment", method: "PATCH", path: "/circles/:circleId/roles/:roleId/assign", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "delete-circle", method: "DELETE", path: "/circles/:circleId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    { routeKey: "update-role", method: "PATCH", path: "/circles/:circleId/roles/:roleId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "update-circle", method: "PATCH", path: "/circles/:circleId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
   ],
   tools: [
     { name: "holacracy-get-circle", displayName: "Get Holacracy Circle", description: "Get a circle's structure including purpose, roles, sub-circles, and policies", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },

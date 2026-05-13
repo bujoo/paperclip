@@ -50,4 +50,8 @@ export const API_ROUTES = {
   createCircle: "create-circle",
   listRoles: "list-roles",
   assignRole: "assign-role",
+  updateRole: "update-role",
+  updateCircle: "update-circle",
+  updateRoleAssignment: "update-role-assignment",
+  deleteCircle: "delete-circle",
 } as const;

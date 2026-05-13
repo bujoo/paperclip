@@ -161,6 +161,46 @@ const plugin = definePlugin({
         return { content: JSON.stringify({ tensionId: id, status: "open", message: `Tension raised: "${title}" (${tensionType})` }) };
       },
     );
+
+    ctx.tools.register(
+      TOOL_NAMES.checkAuthority,
+      { displayName: "Check Authority", description: "Check if an action is within your role's authority scope", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, roleId: { type: "string" }, proposedAction: { type: "string", enum: ["assign-role", "update-policy", "create-project", "escalate", "set-strategy", "modify-governance"] } }, required: ["circleId", "roleId", "proposedAction"] } },
+      async (params): Promise<ToolResult> => {
+        const { circleId, roleId, proposedAction } = params as { circleId: string; roleId: string; proposedAction: string };
+        const roles = await dbCtx!.query<Role>(`SELECT * FROM ${tbl("roles")} WHERE id = $1 AND circle_id = $2`, [roleId, circleId]);
+        if (roles.length === 0) return { content: JSON.stringify({ authorized: false, reason: "Role not found in this circle" }) };
+        const role = roles[0];
+        const authorityMap: Record<string, string[]> = {
+          "circle_lead": ["assign-role", "create-project", "set-strategy", "escalate"],
+          "facilitator": ["escalate"],
+          "secretary": ["escalate"],
+          "circle_rep": ["escalate"],
+        };
+        const structuralActions = ["update-policy", "modify-governance"];
+        if (structuralActions.includes(proposedAction)) {
+          return { content: JSON.stringify({ authorized: false, reason: "Structural changes require governance process. Raise a governance tension instead.", escalateTo: "governance-tension" }) };
+        }
+        const allowed = authorityMap[role.role_type] ?? [];
+        if (allowed.includes(proposedAction)) {
+          return { content: JSON.stringify({ authorized: true, reason: `Action "${proposedAction}" is within ${role.role_type} authority scope` }) };
+        }
+        return { content: JSON.stringify({ authorized: false, reason: `Action "${proposedAction}" is not within ${role.role_type} authority. Consider escalating.`, escalateTo: "circle-lead" }) };
+      },
+    );
+
+    ctx.tools.register(
+      TOOL_NAMES.logAction,
+      { displayName: "Log Action", description: "Log an action taken in your role for the audit trail", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, actionType: { type: "string", enum: ["decision", "delegation", "tension-raised", "escalation", "role-change", "policy-change"] }, detail: { type: "string" } }, required: ["circleId", "actionType", "detail"] } },
+      async (params, runCtx): Promise<ToolResult> => {
+        const { circleId, actionType, detail } = params as { circleId: string; actionType: string; detail: string };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("audit_log")} (id, company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, (SELECT company_id FROM ${tbl("circles")} WHERE id = $2), $3, $2, $4, $5)`,
+          [id, circleId, runCtx.agentId ?? null, actionType, JSON.stringify({ detail })],
+        );
+        return { content: JSON.stringify({ logged: true, id, actionType, detail }) };
+      },
+    );
   },
 
   async onApiRequest(input: PluginApiRequestInput) {
@@ -285,6 +325,47 @@ const plugin = definePlugin({
         await dbCtx!.execute(`UPDATE ${tbl("circles")} SET parent_circle_id = NULL WHERE parent_circle_id = $1`, [circleId]);
         await dbCtx!.execute(`DELETE FROM ${tbl("circles")} WHERE id = $1`, [circleId]);
         return { status: 200, body: { deleted: circleId } };
+      }
+
+      case API_ROUTES.updateTension: {
+        const tensionId = input.params.tensionId as string;
+        const { status, resolution } = input.body as { status: string; resolution?: string; companyId: string };
+        const validStatuses = ["open", "processing", "resolved", "rejected"];
+        if (!validStatuses.includes(status)) return { status: 400, body: { error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` } };
+        const resolvedAt = status === "resolved" || status === "rejected" ? "NOW()" : "NULL";
+        await dbCtx!.execute(
+          `UPDATE ${tbl("tensions")} SET status = $1, resolved_at = ${resolvedAt} WHERE id = $2`,
+          [status, tensionId],
+        );
+        if (resolution) {
+          await dbCtx!.execute(
+            `INSERT INTO ${tbl("audit_log")} (company_id, circle_id, action_type, action_detail) SELECT $1, circle_id, 'tension-resolved', $3::jsonb FROM ${tbl("tensions")} WHERE id = $2`,
+            [input.companyId, tensionId, JSON.stringify({ tensionId, status, resolution })],
+          );
+        }
+        return { status: 200, body: { tensionId, status } };
+      }
+
+      case API_ROUTES.getAuditLog: {
+        const circleId = input.params.circleId as string;
+        const logs = await dbCtx!.query(
+          `SELECT al.*, a.name as agent_name FROM ${tbl("audit_log")} al LEFT JOIN public.agents a ON a.id = al.agent_id WHERE al.circle_id = $1 ORDER BY al.created_at DESC LIMIT 50`,
+          [circleId],
+        );
+        return { status: 200, body: logs };
+      }
+
+      case API_ROUTES.recordDecision: {
+        const circleId = input.params.circleId as string;
+        const { agentId, roleId, decision, context } = input.body as {
+          agentId?: string; roleId?: string; decision: string; context?: string; companyId: string;
+        };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("audit_log")} (id, company_id, agent_id, role_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, $4, $5, 'decision', $6)`,
+          [id, input.companyId, agentId ?? null, roleId ?? null, circleId, JSON.stringify({ decision, context })],
+        );
+        return { status: 201, body: { id, actionType: "decision", decision } };
       }
 
       default:

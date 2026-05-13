@@ -42,6 +42,8 @@ export const TOOL_NAMES = {
   getRole: "holacracy-get-role",
   listTensions: "holacracy-list-tensions",
   raiseTension: "holacracy-raise-tension",
+  checkAuthority: "holacracy-check-authority",
+  logAction: "holacracy-log-action",
 } as const;
 
 export const API_ROUTES = {
@@ -54,4 +56,7 @@ export const API_ROUTES = {
   updateCircle: "update-circle",
   updateRoleAssignment: "update-role-assignment",
   deleteCircle: "delete-circle",
+  updateTension: "update-tension",
+  getAuditLog: "get-audit-log",
+  recordDecision: "record-decision",
 } as const;

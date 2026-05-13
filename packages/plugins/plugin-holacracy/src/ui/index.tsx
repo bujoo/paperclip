@@ -777,7 +777,7 @@ export function CircleNavigator() {
 
 export function HolacracySidebar() {
   return (
-    <a href="/CH/circles" style={{
+    <a href="/CH/circles" data-discover="true" style={{
       display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
       fontSize: 13, fontWeight: 500, color: "var(--foreground)", opacity: 0.8,
       textDecoration: "none", borderRadius: 4,

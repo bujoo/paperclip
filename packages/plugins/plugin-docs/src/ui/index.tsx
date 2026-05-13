@@ -135,7 +135,7 @@ export function DocsPage() {
 
 export function DocsSidebar() {
   return (
-    <a href="/CH/plugins/paperclipai.plugin-docs" style={{
+    <a href="/CH/plugins/paperclipai.plugin-docs" data-discover="true" style={{
       display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
       fontSize: 13, fontWeight: 500, color: "var(--foreground)", opacity: 0.8,
       textDecoration: "none", borderRadius: 4,

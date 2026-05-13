@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useCallback, useRef } from "react";
 import { usePluginData, useHostContext } from "@paperclipai/plugin-sdk/ui";
 
 interface CircleWithRoles {
@@ -21,22 +21,13 @@ interface TreeNode {
   children: TreeNode[];
 }
 
-const COLORS: Record<string, string> = {
-  strategy: "#3b82f6",
-  product: "#22c55e",
-  growth: "#f59e0b",
-  content: "#a855f7",
-  default: "#6b7280",
-};
-
-function getColor(c: CircleWithRoles): string {
-  if (c.color && COLORS[c.color]) return COLORS[c.color];
-  const n = c.name.toLowerCase();
-  for (const [k, v] of Object.entries(COLORS)) {
-    if (k !== "default" && n.includes(k)) return v;
-  }
-  return COLORS.default;
-}
+const CIRCLE_FILL = "rgba(96, 175, 220, 0.18)";
+const CIRCLE_STROKE = "rgba(96, 175, 220, 0.45)";
+const ROLE_GREEN = "#5faa46";
+const ROLE_GREEN_DARK = "#4a9038";
+const TEXT_DARK = "#2c3e50";
+const LINK_BLUE = "#60afd8";
+const GAP = 12;
 
 function buildTree(circles: CircleWithRoles[]): TreeNode[] {
   const map = new Map<string, TreeNode>();
@@ -53,278 +44,422 @@ function buildTree(circles: CircleWithRoles[]): TreeNode[] {
   return roots;
 }
 
-function roleTypeDot(type: string): string {
-  switch (type) {
-    case "circle_lead": return "#f59e0b";
-    case "facilitator": return "#3b82f6";
-    case "secretary": return "#22c55e";
-    case "circle_rep": return "#a855f7";
-    default: return "#6b7280";
+function findNode(nodes: TreeNode[], id: string | null): TreeNode | null {
+  if (!id) return null;
+  for (const n of nodes) {
+    if (n.circle.id === id) return n;
+    const found = findNode(n.children, id);
+    if (found) return found;
   }
+  return null;
+}
+
+function buildBreadcrumb(nodes: TreeNode[], targetId: string | null): TreeNode[] {
+  if (!targetId) return [];
+  function search(node: TreeNode, path: TreeNode[]): TreeNode[] | null {
+    const cur = [...path, node];
+    if (node.circle.id === targetId) return cur;
+    for (const child of node.children) {
+      const result = search(child, cur);
+      if (result) return result;
+    }
+    return null;
+  }
+  for (const root of nodes) {
+    const result = search(root, []);
+    if (result) return result;
+  }
+  return [];
+}
+
+function countContent(node: TreeNode): number {
+  let count = node.circle.roles.length + 1;
+  for (const child of node.children) count += countContent(child);
+  return count;
 }
 
 function roleTypeLabel(type: string): string {
   switch (type) {
-    case "circle_lead": return "Lead";
+    case "circle_lead": return "Circle Lead";
     case "facilitator": return "Facilitator";
     case "secretary": return "Secretary";
-    case "circle_rep": return "Rep";
-    default: return "";
+    case "circle_rep": return "Circle Rep";
+    default: return "Role";
   }
 }
 
-interface RenderedCircle {
-  cx: number;
-  cy: number;
-  r: number;
-  node: TreeNode;
-  color: string;
+function dist(x1: number, y1: number, x2: number, y2: number): number {
+  return Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
 }
 
-interface RenderedRole {
-  cx: number;
-  cy: number;
-  r: number;
-  role: CircleWithRoles["roles"][0];
-  circleColor: string;
+interface LCircle { cx: number; cy: number; r: number; node: TreeNode; depth: number }
+interface LRole { cx: number; cy: number; r: number; role: CircleWithRoles["roles"][0]; filled: boolean }
+interface LLabel { cx: number; cy: number; maxWidth: number; fontSize: number; text: string; circleId: string }
+
+function packCircles(parentR: number, radii: number[]): Array<{ x: number; y: number }> {
+  const n = radii.length;
+  if (n === 0) return [];
+  if (n === 1) return [{ x: 0, y: -parentR * 0.05 }];
+
+  const pos = radii.map((_, i) => {
+    const angle = -Math.PI / 2 + (2 * Math.PI * i) / n;
+    return { x: Math.cos(angle) * parentR * 0.2, y: Math.sin(angle) * parentR * 0.2 };
+  });
+
+  for (let iter = 0; iter < 200; iter++) {
+    let maxPush = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const dx = pos[j].x - pos[i].x;
+        const dy = pos[j].y - pos[i].y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        const minD = radii[i] + radii[j] + GAP;
+        if (d < minD) {
+          const push = (minD - d) / 2;
+          maxPush = Math.max(maxPush, push);
+          const nx = dx / d, ny = dy / d;
+          pos[i].x -= nx * push;
+          pos[i].y -= ny * push;
+          pos[j].x += nx * push;
+          pos[j].y += ny * push;
+        }
+      }
+      const d = Math.sqrt(pos[i].x ** 2 + pos[i].y ** 2);
+      const maxD = parentR - radii[i] - GAP;
+      if (d > maxD && d > 0) {
+        pos[i].x *= maxD / d;
+        pos[i].y *= maxD / d;
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      pos[i].x *= 0.995;
+      pos[i].y *= 0.995;
+    }
+    if (maxPush < 0.3) break;
+  }
+  return pos;
 }
 
-function layoutTree(roots: TreeNode[]): { circles: RenderedCircle[]; roles: RenderedRole[] } {
-  const allCircles: RenderedCircle[] = [];
-  const allRoles: RenderedRole[] = [];
+function computeLayout(rootNode: TreeNode): { circles: LCircle[]; roles: LRole[]; labels: LLabel[] } {
+  const circles: LCircle[] = [];
+  const roles: LRole[] = [];
+  const labels: LLabel[] = [];
 
-  function layoutNode(node: TreeNode, cx: number, cy: number, r: number) {
-    const color = getColor(node.circle);
-    allCircles.push({ cx, cy, r, node, color });
-
+  function lay(node: TreeNode, cx: number, cy: number, r: number, depth: number) {
+    circles.push({ cx, cy, r, node, depth });
     const children = node.children;
-    const roles = node.circle.roles;
+    const nodeRoles = node.circle.roles;
 
     if (children.length === 0) {
-      const roleR = Math.min(r * 0.22, 40);
-      const count = roles.length;
-      roles.forEach((role, i) => {
-        const angle = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(count, 1);
-        const dist = r * 0.55;
-        allRoles.push({
-          cx: cx + Math.cos(angle) * dist,
-          cy: cy + Math.sin(angle) * dist,
-          r: roleR,
-          role,
-          circleColor: color,
-        });
+      const roleR = Math.min(r * 0.17, 22);
+      const spacing = roleR * 2.5;
+      const cols = Math.ceil(Math.sqrt(nodeRoles.length));
+      const rows = Math.ceil(nodeRoles.length / cols);
+      const startX = cx - ((cols - 1) * spacing) / 2;
+      const startY = cy - ((rows - 1) * spacing) / 2 - r * 0.12;
+
+      nodeRoles.forEach((role, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const rx = startX + col * spacing;
+        const ry = startY + row * spacing;
+        if (dist(rx, ry, cx, cy) + roleR < r - 4) {
+          roles.push({ cx: rx, cy: ry, r: roleR, role, filled: !!role.agent_name });
+        }
+      });
+
+      labels.push({
+        cx, cy: cy + r * 0.55,
+        maxWidth: r * 1.6, fontSize: Math.max(Math.min(r * 0.13, 22), 10),
+        text: node.circle.name, circleId: node.circle.id,
       });
       return;
     }
 
-    const n = children.length;
-    const ringR = r * 0.52;
-    const maxChildR = ringR * Math.sin(Math.PI / Math.max(n, 2)) * 0.90;
-    const containedR = r - ringR - 10;
-    const childR = Math.min(maxChildR, containedR);
-    const startAngle = -Math.PI / 2;
+    const weighted = children.map(c => ({ node: c, weight: countContent(c) }));
+    weighted.sort((a, b) => b.weight - a.weight);
+    const totalWeight = weighted.reduce((s, c) => s + c.weight, 0);
 
-    children.forEach((child, i) => {
-      const angle = startAngle + (2 * Math.PI * i) / n;
-      const childCx = cx + Math.cos(angle) * ringR;
-      const childCy = cy + Math.sin(angle) * ringR;
-      layoutNode(child, childCx, childCy, childR);
+    const childRadii = weighted.map(w => {
+      const fraction = w.weight / totalWeight;
+      return Math.max(r * Math.sqrt(fraction) * 0.62, 28);
     });
 
-    const labelR = r * 0.18;
-    const labelAngle = Math.PI * 0.75;
-    const labelCx = cx + Math.cos(labelAngle) * (r - labelR - 10);
-    const labelCy = cy + Math.sin(labelAngle) * (r - labelR - 10);
+    const positions = packCircles(r * 0.85, childRadii);
+    const placedChildren: Array<{ cx: number; cy: number; r: number }> = [];
 
-    const roleR = Math.min(labelR * 0.7, 32);
-    roles.forEach((role, i) => {
-      const angle = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(roles.length, 1);
-      const dist = labelR * 1.8;
-      const rx = labelCx + Math.cos(angle) * dist;
-      const ry = labelCy + Math.sin(angle) * dist;
-      if (Math.sqrt((rx - cx) ** 2 + (ry - cy) ** 2) + roleR < r - 5) {
-        allRoles.push({ cx: rx, cy: ry, r: roleR, role, circleColor: color });
+    weighted.forEach((w, i) => {
+      const childCx = cx + positions[i].x;
+      const childCy = cy + positions[i].y;
+      placedChildren.push({ cx: childCx, cy: childCy, r: childRadii[i] });
+      lay(w.node, childCx, childCy, childRadii[i], depth + 1);
+    });
+
+    const roleR = Math.min(r * 0.04, 16);
+    const roleSpacing = roleR * 2.6;
+    const roleSlots: Array<{ x: number; y: number }> = [];
+
+    for (let ry = cy - r + roleR + GAP; ry <= cy + r - roleR - GAP; ry += roleSpacing) {
+      for (let rx = cx - r + roleR + GAP; rx <= cx + r - roleR - GAP; rx += roleSpacing) {
+        if (dist(rx, ry, cx, cy) + roleR > r - GAP) continue;
+        if (placedChildren.some(p => dist(rx, ry, p.cx, p.cy) < p.r + roleR + GAP * 1.5)) continue;
+        if (roleSlots.some(s => dist(rx, ry, s.x, s.y) < roleR * 2 + 3)) continue;
+        roleSlots.push({ x: rx, y: ry });
+        if (roleSlots.length >= nodeRoles.length) break;
+      }
+      if (roleSlots.length >= nodeRoles.length) break;
+    }
+
+    nodeRoles.forEach((role, i) => {
+      if (i < roleSlots.length) {
+        roles.push({ cx: roleSlots[i].x, cy: roleSlots[i].y, r: roleR, role, filled: !!role.agent_name });
       }
     });
+
+    const fontSize = Math.max(Math.min(r * 0.075, 36), 12);
+    const labelCandidates = [
+      { x: cx + r * 0.35, y: cy + r * 0.72 },
+      { x: cx - r * 0.35, y: cy + r * 0.72 },
+      { x: cx, y: cy + r * 0.78 },
+      { x: cx + r * 0.55, y: cy - r * 0.65 },
+    ];
+    let best = labelCandidates[0];
+    for (const cand of labelCandidates) {
+      if (placedChildren.every(p => dist(cand.x, cand.y, p.cx, p.cy) > p.r + fontSize * 2)) {
+        best = cand;
+        break;
+      }
+    }
+    labels.push({ cx: best.x, cy: best.y, maxWidth: r * 0.6, fontSize, text: node.circle.name, circleId: node.circle.id });
   }
 
-  if (roots.length === 1) {
-    layoutNode(roots[0], 500, 500, 480);
-  } else {
-    roots.forEach((root, i) => {
-      const angle = (2 * Math.PI * i) / roots.length - Math.PI / 2;
-      const cx = 500 + Math.cos(angle) * 250;
-      const cy = 500 + Math.sin(angle) * 250;
-      layoutNode(root, cx, cy, 200);
-    });
-  }
-
-  return { circles: allCircles, roles: allRoles };
+  lay(rootNode, 500, 500, 480, 0);
+  return { circles, roles, labels };
 }
 
 export function CircleNavigator() {
   const hostCtx = useHostContext();
   const companyId = hostCtx?.companyId ?? null;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [tooltip, setTooltip] = useState<{ role: CircleWithRoles["roles"][0]; x: number; y: number } | null>(null);
+  const [hoveredCircle, setHoveredCircle] = useState<string | null>(null);
 
   const { data, loading, error } = usePluginData<CircleWithRoles[]>("circles-tree", {
     companyId: companyId ?? "",
   });
 
   const tree = useMemo(() => (data ? buildTree(data) : []), [data]);
-  const layout = useMemo(() => layoutTree(tree), [tree]);
 
-  if (!companyId) {
-    return <div style={{ padding: 32, color: "#9ca3af" }}>Select a company to view circles.</div>;
-  }
+  const rootNode = useMemo(() => {
+    if (tree.length === 0) return null;
+    if (focusedId) {
+      const found = findNode(tree, focusedId);
+      if (found) return found;
+    }
+    return tree[0];
+  }, [tree, focusedId]);
 
-  if (loading) {
-    return <div style={{ padding: 32, color: "#9ca3af" }}>Loading circles...</div>;
-  }
+  const breadcrumb = useMemo(() => buildBreadcrumb(tree, focusedId), [tree, focusedId]);
+  const layout = useMemo(() => (rootNode ? computeLayout(rootNode) : null), [rootNode]);
 
-  if (error) {
-    return <div style={{ padding: 32, color: "#ef4444" }}>Failed to load circles: {String(error)}</div>;
-  }
+  const handleCircleClick = useCallback((e: React.MouseEvent, circleId: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setTooltip(null);
+    if (rootNode && circleId === rootNode.circle.id) return;
+    const node = findNode(tree, circleId);
+    if (node && node.children.length > 0) {
+      setFocusedId(circleId);
+    }
+  }, [tree, rootNode]);
 
+  const handleRoleClick = useCallback((e: React.MouseEvent, role: CircleWithRoles["roles"][0]) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    setTooltip({ role, x: e.clientX - rect.left, y: e.clientY - rect.top });
+  }, []);
+
+  if (!companyId) return <div style={{ padding: 32, color: "#888" }}>Select a company to view circles.</div>;
+  if (loading) return <div style={{ padding: 32, color: "#888" }}>Loading circles...</div>;
+  if (error) return <div style={{ padding: 32, color: "#c00" }}>Failed to load circles: {String(error)}</div>;
   if (!data || data.length === 0) {
     return (
       <div style={{ padding: 32, textAlign: "center" }}>
-        <p style={{ color: "#9ca3af", marginBottom: 8 }}>No circles configured yet.</p>
-        <p style={{ color: "#6b7280", fontSize: 13 }}>Create circles via the API or agent tools.</p>
+        <p style={{ color: "#888", marginBottom: 8 }}>No circles configured yet.</p>
+        <p style={{ color: "#aaa", fontSize: 13 }}>Create circles via the API or agent tools.</p>
       </div>
     );
   }
+  if (!layout) return null;
 
   return (
-    <div style={{ background: "#09090b", borderRadius: 8, overflow: "hidden" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: "1px solid #27272a" }}>
-        <div>
-          <h2 style={{ fontSize: 18, fontWeight: 600, color: "#fafafa", margin: 0 }}>Holacracy Circles</h2>
-          <div style={{ display: "flex", gap: 16, marginTop: 6, fontSize: 12 }}>
-            {[["Lead", "#f59e0b"], ["Facilitator", "#3b82f6"], ["Secretary", "#22c55e"], ["Rep", "#a855f7"], ["Custom", "#6b7280"]].map(([label, color]) => (
-              <span key={label} style={{ display: "flex", alignItems: "center", gap: 4, color: "#a1a1aa" }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, display: "inline-block" }} />
-                {label}
+    <div style={{ background: "#fff", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        padding: "10px 16px", borderBottom: "1px solid #e5e7eb",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}>
+          {breadcrumb.length > 0 ? (
+            <>
+              <span
+                style={{ color: LINK_BLUE, cursor: "pointer", fontWeight: 500 }}
+                onClick={() => setFocusedId(null)}
+              >
+                {tree[0]?.circle.name ?? "Circles"}
               </span>
-            ))}
-          </div>
+              {breadcrumb.slice(1).map((bc) => (
+                <React.Fragment key={bc.circle.id}>
+                  <span style={{ color: "#ccc", margin: "0 2px" }}>/</span>
+                  <span
+                    style={{
+                      color: bc.circle.id === focusedId ? TEXT_DARK : LINK_BLUE,
+                      cursor: bc.circle.id === focusedId ? "default" : "pointer",
+                      fontWeight: bc.circle.id === focusedId ? 600 : 500,
+                    }}
+                    onClick={() => { if (bc.circle.id !== focusedId) setFocusedId(bc.circle.id); }}
+                  >
+                    {bc.circle.name}
+                  </span>
+                </React.Fragment>
+              ))}
+            </>
+          ) : (
+            <span style={{ color: TEXT_DARK, fontWeight: 600 }}>{rootNode?.circle.name ?? "Circles"}</span>
+          )}
         </div>
-        <span style={{ color: "#71717a", fontSize: 13 }}>{data.length} circles</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 12, color: "#999" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ width: 10, height: 10, borderRadius: "50%", background: ROLE_GREEN, display: "inline-block" }} />
+            Assigned
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{
+              width: 10, height: 10, borderRadius: "50%", background: "#fff",
+              border: `1.5px solid ${ROLE_GREEN}`, display: "inline-block", boxSizing: "border-box",
+            }} />
+            Vacant
+          </span>
+          <span>{data.length} circles</span>
+        </div>
       </div>
 
-      <svg
-        viewBox="0 -15 1000 1030"
-        style={{ width: "100%", height: "calc(100vh - 240px)", minHeight: 500 }}
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        {layout.circles.map((lc) => (
-          <g key={lc.node.circle.id}>
-            <circle
-              cx={lc.cx}
-              cy={lc.cy}
-              r={lc.r}
-              fill={lc.color + "10"}
-              stroke={lc.color}
-              strokeWidth={2}
-              strokeOpacity={0.6}
-            />
-            <foreignObject
-              x={lc.cx - lc.r * 0.4}
-              y={lc.cy - lc.r + 8}
-              width={lc.r * 0.8}
-              height={lc.r * 0.3}
-            >
-              <div style={{
-                color: lc.color,
-                fontSize: Math.max(Math.min(lc.r * 0.08, 18), 11),
-                fontWeight: 600,
-                textAlign: "center",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}>
-                {lc.node.circle.name}
-              </div>
-              {lc.node.circle.purpose && (
-                <div style={{
-                  color: "#71717a",
-                  fontSize: Math.max(Math.min(lc.r * 0.05, 11), 8),
-                  textAlign: "center",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  marginTop: 2,
-                }}>
-                  {lc.node.circle.purpose}
-                </div>
-              )}
-            </foreignObject>
-          </g>
-        ))}
+      <div ref={containerRef} style={{ position: "relative" }} onClick={() => setTooltip(null)}>
+        <svg
+          viewBox="0 -15 1000 1030"
+          style={{ width: "100%", height: "calc(100vh - 200px)", minHeight: 500, display: "block" }}
+        >
+          {layout.circles
+            .slice()
+            .sort((a, b) => a.depth - b.depth)
+            .map((lc) => (
+              <circle
+                key={`c-${lc.node.circle.id}`}
+                cx={lc.cx} cy={lc.cy} r={lc.r}
+                fill={CIRCLE_FILL}
+                stroke={CIRCLE_STROKE}
+                strokeWidth={1.5}
+                style={{
+                  cursor: lc.node.children.length > 0 && lc.node.circle.id !== rootNode?.circle.id ? "pointer" : "default",
+                  opacity: hoveredCircle === lc.node.circle.id ? 0.85 : 1,
+                  transition: "opacity 0.15s",
+                }}
+                onClick={(e) => handleCircleClick(e, lc.node.circle.id)}
+                onMouseEnter={() => lc.node.children.length > 0 && setHoveredCircle(lc.node.circle.id)}
+                onMouseLeave={() => setHoveredCircle(null)}
+              />
+            ))}
 
-        {layout.roles.map((lr) => (
-          <g key={lr.role.id}>
-            <circle
-              cx={lr.cx}
-              cy={lr.cy}
-              r={lr.r}
-              fill={roleTypeDot(lr.role.role_type) + "20"}
-              stroke={roleTypeDot(lr.role.role_type)}
-              strokeWidth={1.5}
-              strokeOpacity={0.8}
-            />
-            <foreignObject
-              x={lr.cx - lr.r + 4}
-              y={lr.cy - lr.r + 4}
-              width={(lr.r - 4) * 2}
-              height={(lr.r - 4) * 2}
-            >
-              <div style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                height: "100%",
-                textAlign: "center",
-                overflow: "hidden",
-              }}>
+          {layout.roles.map((lr, ri) => (
+            <g key={`r-${ri}-${lr.role.id}`} style={{ cursor: "pointer" }} onClick={(e) => handleRoleClick(e, lr.role)}>
+              <circle
+                cx={lr.cx} cy={lr.cy} r={lr.r}
+                fill={lr.filled ? ROLE_GREEN : "#ffffff"}
+                stroke={lr.filled ? ROLE_GREEN_DARK : ROLE_GREEN}
+                strokeWidth={lr.filled ? 0 : 1.5}
+              />
+              <foreignObject
+                x={lr.cx - lr.r + 2} y={lr.cy - lr.r + 2}
+                width={(lr.r - 2) * 2} height={(lr.r - 2) * 2}
+                style={{ pointerEvents: "none" }}
+              >
                 <div style={{
-                  color: "#fafafa",
-                  fontSize: Math.max(Math.min(lr.r * 0.3, 11), 7),
-                  fontWeight: 500,
-                  lineHeight: 1.2,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  display: "-webkit-box",
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: "vertical",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: "100%", height: "100%", textAlign: "center",
+                  color: lr.filled ? "#fff" : TEXT_DARK,
+                  fontSize: Math.max(Math.min(lr.r * 0.35, 10), 6),
+                  fontWeight: 500, lineHeight: 1.15, overflow: "hidden",
                 }}>
                   {lr.role.name}
                 </div>
-                {lr.role.agent_name && (
-                  <div style={{
-                    color: "#a1a1aa",
-                    fontSize: Math.max(Math.min(lr.r * 0.22, 9), 6),
-                    marginTop: 1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    width: "100%",
-                  }}>
-                    {lr.role.agent_name}
-                  </div>
-                )}
-                <div style={{
-                  color: "#71717a",
-                  fontSize: Math.max(Math.min(lr.r * 0.2, 8), 5),
-                  marginTop: 1,
-                }}>
-                  {roleTypeLabel(lr.role.role_type)}
-                </div>
+              </foreignObject>
+            </g>
+          ))}
+
+          {layout.labels.map((ll, li) => (
+            <foreignObject
+              key={`l-${li}-${ll.circleId}`}
+              x={ll.cx - ll.maxWidth / 2} y={ll.cy - ll.fontSize * 0.6}
+              width={ll.maxWidth} height={ll.fontSize * 2.5}
+              style={{ pointerEvents: "none" }}
+            >
+              <div style={{
+                color: TEXT_DARK, fontSize: ll.fontSize, fontWeight: 600,
+                textAlign: "center", fontFamily: "system-ui, -apple-system, sans-serif",
+                lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis",
+              }}>
+                {ll.text}
               </div>
             </foreignObject>
-          </g>
-        ))}
-      </svg>
+          ))}
+        </svg>
+
+        {tooltip && (
+          <div
+            style={{
+              position: "absolute", left: tooltip.x, top: tooltip.y - 8,
+              transform: "translate(-50%, -100%)",
+              background: "#fff", border: "1px solid #e0e0e0", borderRadius: 8,
+              padding: "12px 16px", boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+              zIndex: 10, maxWidth: 260, minWidth: 160,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontWeight: 600, color: TEXT_DARK, marginBottom: 4, fontSize: 14 }}>
+              {tooltip.role.name}
+            </div>
+            {tooltip.role.purpose && (
+              <div style={{ fontSize: 12, color: "#666", marginBottom: 6, lineHeight: 1.4 }}>
+                {tooltip.role.purpose}
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: "#999", display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{
+                background: tooltip.role.agent_name ? "#e8f5e9" : "#fff3e0",
+                color: tooltip.role.agent_name ? "#2e7d32" : "#e65100",
+                padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 500,
+              }}>
+                {roleTypeLabel(tooltip.role.role_type)}
+              </span>
+              {tooltip.role.agent_name
+                ? <span style={{ color: "#666" }}>{tooltip.role.agent_name}</span>
+                : <span style={{ color: "#e65100", fontStyle: "italic" }}>Unassigned</span>
+              }
+            </div>
+            <button
+              onClick={() => setTooltip(null)}
+              style={{
+                position: "absolute", top: 6, right: 8, background: "none", border: "none",
+                cursor: "pointer", fontSize: 14, color: "#bbb", lineHeight: 1,
+              }}
+            >
+              x
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

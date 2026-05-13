@@ -74,6 +74,18 @@ Work with the proposer AND objector to amend the proposal:
 
 Each participant shares a closing reflection. No discussion.
 
+## Step 5: Board Review (HITL - Required for Governance)
+
+ALL governance proposals that were adopted MUST be reviewed by the board before implementation.
+
+Create a request_confirmation interaction:
+- List all adopted proposals with their governance changes
+- List any roles/policies/domains that would be modified
+- Ask: "Board: approve these governance changes or provide feedback."
+- Set `supersedeOnUserComment: true`
+
+This is the two-tier authority checkpoint. Governance changes are structural and require human sign-off.
+
 ## After the Meeting
 
 1. Secretary records all governance changes via holacracy-log-action

@@ -70,6 +70,23 @@ Create a child issue for each circle member:
 "[Tactical] Closing: {Agent Name}"
 Description: "Share a closing reflection on this meeting. One sentence, no discussion."
 
+## Step 8: Board Review (HITL)
+
+After posting the meeting summary, create a request_confirmation interaction on the meeting issue:
+
+```
+POST /api/issues/{meetingIssueId}/interactions
+{
+  "kind": "request_confirmation",
+  "title": "Tactical Meeting Outcomes - Board Review",
+  "body": "Please review the meeting outcomes:\n\n{list of issues created}\n{list of decisions made}\n{list of tensions deferred to governance}\n\nApprove to proceed, or comment with feedback.",
+  "supersedeOnUserComment": true
+}
+```
+
+Do NOT close the meeting issue until the board has reviewed.
+If the board provides feedback, adjust the outcomes accordingly.
+
 ## After the Meeting
 
 The Secretary (or Facilitator if no Secretary response):

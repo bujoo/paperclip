@@ -144,7 +144,7 @@ const plugin = definePlugin({
       const companyId = params.companyId as string;
       if (!companyId) return null;
       const circles = await ctx.db.query(
-        `SELECT c.id, c.name, c.purpose, c.domains, c.color FROM ${tbl("circles")} WHERE company_id = $1 ORDER BY parent_circle_id NULLS FIRST, name`,
+        `SELECT c.id, c.name, c.purpose, c.domains, c.color FROM ${tbl("circles")} c WHERE c.company_id = $1 ORDER BY c.parent_circle_id NULLS FIRST, c.name`,
         [companyId],
       );
       const result = [];

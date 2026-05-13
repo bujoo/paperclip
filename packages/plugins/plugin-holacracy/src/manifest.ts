@@ -61,6 +61,7 @@ const manifest: PaperclipPluginManifestV1 = {
     { routeKey: "update-tension", method: "PATCH", path: "/tensions/:tensionId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "get-audit-log", method: "GET", path: "/circles/:circleId/audit-log", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
     { routeKey: "record-decision", method: "POST", path: "/circles/:circleId/decide", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "forward-tension", method: "POST", path: "/circles/:circleId/forward-tension", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
   ],
   tools: [
     { name: "holacracy-get-circle", displayName: "Get Holacracy Circle", description: "Get a circle's structure including purpose, roles, sub-circles, and policies", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },
@@ -69,6 +70,7 @@ const manifest: PaperclipPluginManifestV1 = {
     { name: "holacracy-raise-tension", displayName: "Raise Tension", description: "Raise a tension in a circle for processing in the next meeting", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, title: { type: "string" }, description: { type: "string" }, type: { type: "string", enum: ["operational", "governance"] } }, required: ["circleId", "title", "description", "type"] } },
     { name: "holacracy-check-authority", displayName: "Check Authority", description: "Check if an action is within your role's authority scope before acting", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, roleId: { type: "string" }, proposedAction: { type: "string", enum: ["assign-role", "update-policy", "create-project", "escalate", "set-strategy", "modify-governance"] } }, required: ["circleId", "roleId", "proposedAction"] } },
     { name: "holacracy-log-action", displayName: "Log Action", description: "Log an action taken in your role for the audit trail", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, actionType: { type: "string", enum: ["decision", "delegation", "tension-raised", "escalation", "role-change", "policy-change"] }, detail: { type: "string" } }, required: ["circleId", "actionType", "detail"] } },
+    { name: "holacracy-forward-tension", displayName: "Forward Tension", description: "Forward a tension from your circle to the parent circle (Circle Rep only)", parametersSchema: { type: "object", properties: { tensionId: { type: "string" }, context: { type: "string" } }, required: ["tensionId", "context"] } },
   ],
   ui: {
     slots: [

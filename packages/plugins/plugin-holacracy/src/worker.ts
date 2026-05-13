@@ -34,6 +34,7 @@ interface Role {
 interface Tension {
   id: string;
   circle_id: string;
+  source_agent_id: string | null;
   title: string;
   description: string | null;
   tension_type: string;
@@ -106,6 +107,15 @@ const plugin = definePlugin({
         result.push({ ...c, roles });
       }
       return result;
+    });
+
+    ctx.data.register("tensions-cross-circle", async (params) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return [];
+      return ctx.db.query<Tension & { circle_name: string; source_circle_name: string }>(
+        `SELECT t.*, c.name as circle_name FROM ${tbl("tensions")} t JOIN ${tbl("circles")} c ON c.id = t.circle_id WHERE c.company_id = $1 AND t.title LIKE '[Forwarded]%' ORDER BY t.created_at DESC LIMIT 20`,
+        [companyId],
+      );
     });
 
     ctx.tools.register(
@@ -199,6 +209,30 @@ const plugin = definePlugin({
           [id, circleId, runCtx.agentId ?? null, actionType, JSON.stringify({ detail })],
         );
         return { content: JSON.stringify({ logged: true, id, actionType, detail }) };
+      },
+    );
+
+    ctx.tools.register(
+      TOOL_NAMES.forwardTension,
+      { displayName: "Forward Tension", description: "Forward a tension from your circle to the parent circle (Circle Rep only)", parametersSchema: { type: "object", properties: { tensionId: { type: "string" }, context: { type: "string" } }, required: ["tensionId", "context"] } },
+      async (params, runCtx): Promise<ToolResult> => {
+        const { tensionId, context } = params as { tensionId: string; context: string };
+        const tensions = await dbCtx!.query<Tension>(`SELECT * FROM ${tbl("tensions")} WHERE id = $1`, [tensionId]);
+        if (tensions.length === 0) return { content: "Tension not found", error: "not found" };
+        const sourceTension = tensions[0];
+        const circles = await dbCtx!.query<Circle>(`SELECT * FROM ${tbl("circles")} WHERE id = $1`, [sourceTension.circle_id]);
+        if (!circles[0]?.parent_circle_id) return { content: "Circle has no parent circle to forward to", error: "no parent" };
+        const forwardedId = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [forwardedId, circles[0].parent_circle_id, runCtx.agentId ?? sourceTension.source_agent_id, `[Forwarded] ${sourceTension.title}`, `${context}\n\n---\nOriginal tension from ${circles[0].name}: ${sourceTension.description ?? ""}`, sourceTension.tension_type],
+        );
+        await dbCtx!.execute(`UPDATE ${tbl("tensions")} SET status = 'processing' WHERE id = $1`, [tensionId]);
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ((SELECT company_id FROM ${tbl("circles")} WHERE id = $1), $2, $1, 'tension-forwarded', $3)`,
+          [sourceTension.circle_id, runCtx.agentId ?? null, JSON.stringify({ originalTensionId: tensionId, forwardedTensionId: forwardedId, context })],
+        );
+        return { content: JSON.stringify({ forwardedTensionId: forwardedId, targetCircleId: circles[0].parent_circle_id, status: "forwarded" }) };
       },
     );
   },
@@ -353,6 +387,33 @@ const plugin = definePlugin({
           [circleId],
         );
         return { status: 200, body: logs };
+      }
+
+      case API_ROUTES.forwardTension: {
+        const circleId = input.params.circleId as string;
+        const { tensionId, context } = input.body as { tensionId: string; context: string; companyId: string };
+        const tensions = await dbCtx!.query<Tension>(
+          `SELECT * FROM ${tbl("tensions")} WHERE id = $1 AND circle_id = $2`,
+          [tensionId, circleId],
+        );
+        if (tensions.length === 0) return { status: 404, body: { error: "Tension not found in this circle" } };
+        const sourceTension = tensions[0];
+        const circle = await dbCtx!.query<Circle>(`SELECT * FROM ${tbl("circles")} WHERE id = $1`, [circleId]);
+        if (!circle[0]?.parent_circle_id) return { status: 400, body: { error: "Circle has no parent circle to forward to" } };
+        const forwardedId = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [forwardedId, circle[0].parent_circle_id, sourceTension.source_agent_id, `[Forwarded] ${sourceTension.title}`, `${context}\n\n---\nOriginal tension from ${circle[0].name}: ${sourceTension.description ?? ""}`, sourceTension.tension_type],
+        );
+        await dbCtx!.execute(
+          `UPDATE ${tbl("tensions")} SET status = 'processing' WHERE id = $1`,
+          [tensionId],
+        );
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, 'tension-forwarded', $4)`,
+          [input.companyId, sourceTension.source_agent_id, circleId, JSON.stringify({ originalTensionId: tensionId, forwardedTensionId: forwardedId, targetCircleId: circle[0].parent_circle_id, context })],
+        );
+        return { status: 201, body: { forwardedTensionId: forwardedId, targetCircleId: circle[0].parent_circle_id, originalTensionId: tensionId, status: "forwarded" } };
       }
 
       case API_ROUTES.recordDecision: {

@@ -44,6 +44,7 @@ export const TOOL_NAMES = {
   raiseTension: "holacracy-raise-tension",
   checkAuthority: "holacracy-check-authority",
   logAction: "holacracy-log-action",
+  forwardTension: "holacracy-forward-tension",
 } as const;
 
 export const API_ROUTES = {
@@ -59,4 +60,5 @@ export const API_ROUTES = {
   updateTension: "update-tension",
   getAuditLog: "get-audit-log",
   recordDecision: "record-decision",
+  forwardTension: "forward-tension",
 } as const;

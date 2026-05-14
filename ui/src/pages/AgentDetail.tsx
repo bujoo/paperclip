@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { PluginSlotMount, usePluginSlots } from "@/plugins/slots";
 import { useParams, useNavigate, Link, Navigate, useBeforeUnload } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -235,9 +236,10 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget";
+type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget" | `plugin:${string}`;
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
+  if (value?.startsWith("plugin:")) return value as AgentDetailView;
   if (value === "instructions" || value === "prompts") return "instructions";
   if (value === "configure" || value === "configuration") return "configuration";
   if (value === "skills") return "skills";
@@ -640,7 +642,10 @@ export function AgentDetail() {
   const navigate = useNavigate();
   const [actionError, setActionError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
-  const activeView = urlRunId ? "runs" as AgentDetailView : parseAgentDetailView(urlTab ?? null);
+  const [activePluginTabId, setActivePluginTabId] = useState<string | null>(null);
+  const activeView = urlRunId ? "runs" as AgentDetailView
+    : activePluginTabId ? activePluginTabId as AgentDetailView
+    : parseAgentDetailView(urlTab ?? null);
   const needsDashboardData = activeView === "dashboard";
   const needsRunData = activeView === "runs" || Boolean(urlRunId);
   const shouldLoadHeartbeats = needsDashboardData || needsRunData;
@@ -669,6 +674,21 @@ export function AgentDetail() {
   const canonicalAgentRef = agent ? agentRouteRef(agent) : routeAgentRef;
   const agentLookupRef = agent?.id ?? routeAgentRef;
   const resolvedAgentId = agent?.id ?? null;
+
+  const { slots: pluginDetailSlots } = usePluginSlots({
+    slotTypes: ["detailTab"],
+    entityType: "agent",
+    companyId: resolvedCompanyId,
+    enabled: !!resolvedCompanyId,
+  });
+  const pluginTabItems = useMemo(
+    () => pluginDetailSlots.map((slot) => ({
+      value: `plugin:${slot.pluginKey}:${slot.id}` as AgentDetailView,
+      label: slot.displayName,
+      slot,
+    })),
+    [pluginDetailSlots],
+  );
 
   const { data: runtimeState } = useQuery({
     queryKey: queryKeys.agents.runtimeState(resolvedAgentId ?? routeAgentRef),
@@ -750,6 +770,7 @@ export function AgentDetail() {
       }
       return;
     }
+    if (activePluginTabId) return;
     const canonicalTab =
       activeView === "instructions"
         ? "instructions"
@@ -1015,7 +1036,14 @@ export function AgentDetail() {
       {!urlRunId && (
         <Tabs
           value={activeView}
-          onValueChange={(value) => navigate(`/agents/${canonicalAgentRef}/${value}`)}
+          onValueChange={(value) => {
+            if (value.startsWith("plugin:")) {
+              setActivePluginTabId(value);
+            } else {
+              setActivePluginTabId(null);
+              navigate(`/agents/${canonicalAgentRef}/${value}`);
+            }
+          }}
         >
           <PageTabBar
             items={[
@@ -1025,9 +1053,20 @@ export function AgentDetail() {
               { value: "configuration", label: "Configuration" },
               { value: "runs", label: "Runs" },
               { value: "budget", label: "Budget" },
+              ...pluginTabItems.map((item) => ({
+                value: item.value,
+                label: item.label,
+              })),
             ]}
             value={activeView}
-            onValueChange={(value) => navigate(`/agents/${canonicalAgentRef}/${value}`)}
+            onValueChange={(value) => {
+              if (value.startsWith("plugin:")) {
+                setActivePluginTabId(value);
+              } else {
+                setActivePluginTabId(null);
+                navigate(`/agents/${canonicalAgentRef}/${value}`);
+              }
+            }}
           />
         </Tabs>
       )}
@@ -1162,6 +1201,23 @@ export function AgentDetail() {
           />
         </div>
       ) : null}
+
+      {activeView.startsWith("plugin:") && (() => {
+        const activePluginTab = pluginTabItems.find((item) => item.value === activeView);
+        if (!activePluginTab) return null;
+        return (
+          <PluginSlotMount
+            slot={activePluginTab.slot}
+            context={{
+              companyId: resolvedCompanyId,
+              companyPrefix: companyPrefix ?? null,
+              entityId: agent?.id ?? null,
+              entityType: "agent",
+            }}
+            missingBehavior="placeholder"
+          />
+        );
+      })()}
     </div>
   );
 }

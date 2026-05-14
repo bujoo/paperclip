@@ -20,6 +20,16 @@ interface McpServer {
   updated_at: string;
 }
 
+interface DiscoveredServer {
+  name: string;
+  transportType: "stdio" | "http" | "sse";
+  command: string | null;
+  args: string[];
+  env: Record<string, string>;
+  transportUrl: string | null;
+  configPath: string;
+}
+
 interface McpAssignment {
   id: string;
   agent_id: string;
@@ -77,9 +87,13 @@ export function McpManagerPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<McpServer | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const [syncing, setSyncing] = useState(false);
+
   const { data: servers, loading, refresh } = usePluginData<McpServer[]>("mcp-servers-list", {
     companyId: companyId ?? "",
   });
+
+  const { data: discovered, refresh: refreshDiscovered } = usePluginData<DiscoveredServer[]>("discovered-servers", {});
 
   const pluginBase = `/api/plugins/paperclipai.plugin-mcp-manager/api`;
 
@@ -158,6 +172,34 @@ export function McpManagerPage() {
     refresh();
   }
 
+  async function handleSync() {
+    if (!companyId) return;
+    setSyncing(true);
+    await apiCall("POST", `/servers/sync?companyId=${companyId}`, { companyId });
+    setSyncing(false);
+    refresh();
+    refreshDiscovered();
+  }
+
+  async function handleImport(server: DiscoveredServer) {
+    if (!companyId) return;
+    await apiCall("POST", `/servers?companyId=${companyId}`, {
+      companyId,
+      name: server.name,
+      command: server.command,
+      args: server.args,
+      env: server.env,
+      transportType: server.transportType,
+      transportUrl: server.transportUrl,
+      source: "discovered",
+    });
+    refresh();
+    refreshDiscovered();
+  }
+
+  const existingNames = new Set((servers || []).map(s => s.name));
+  const newDiscovered = (discovered || []).filter(d => !existingNames.has(d.name));
+
   if (!companyId) {
     return <div style={{ padding: 32, color: "var(--muted-foreground)" }}>Select a company.</div>;
   }
@@ -173,6 +215,9 @@ export function McpManagerPage() {
           </p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={handleSync} disabled={syncing} style={btnOutline}>
+            {syncing ? "Syncing..." : "Sync from Claude Code"}
+          </button>
           <button onClick={openCreate} style={btnPrimary}>
             + Add Server
           </button>
@@ -265,6 +310,43 @@ export function McpManagerPage() {
           </div>
         ))}
       </div>
+
+      {/* Discovered from Claude Code */}
+      {newDiscovered.length > 0 && (
+        <div style={{ padding: "0 24px 16px" }}>
+          <h3 style={{ fontSize: 13, fontWeight: 600, margin: "0 0 12px", color: "var(--muted-foreground)" }}>
+            Discovered from Claude Code
+            <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 8 }}>
+              (~/.claude/mcp.json)
+            </span>
+          </h3>
+          {newDiscovered.map(server => (
+            <div key={server.name} style={{
+              border: "1px dashed var(--border)", borderRadius: 8, padding: "10px 16px", marginBottom: 6,
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+              opacity: 0.8, background: "var(--card, var(--background))",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="var(--muted-foreground)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/>
+                  <line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>
+                </svg>
+                <span style={{ fontSize: 13, fontWeight: 500, color: "var(--foreground)" }}>{server.name}</span>
+                <span style={{ ...badge, ...transportBadgeStyle[server.transportType] }}>
+                  {server.transportType}
+                </span>
+                <span style={{ fontSize: 11, color: "var(--muted-foreground)", opacity: 0.6, fontFamily: "monospace" }}>
+                  {server.transportUrl || `${server.command || ""} ${server.args.join(" ")}`.trim()}
+                </span>
+              </div>
+              <button onClick={() => handleImport(server)} style={btnOutline}>
+                Import
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Create/Edit Dialog */}
       {dialogOpen && (

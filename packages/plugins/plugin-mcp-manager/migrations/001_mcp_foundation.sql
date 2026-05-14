@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS mcp_servers (
+CREATE TABLE IF NOT EXISTS plugin_mcp_manager_372483a022.mcp_servers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id uuid NOT NULL,
   name text NOT NULL,
@@ -17,10 +17,10 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS agent_mcp_assignments (
+CREATE TABLE IF NOT EXISTS plugin_mcp_manager_372483a022.agent_mcp_assignments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agent_id uuid NOT NULL,
-  mcp_server_id uuid NOT NULL,
+  mcp_server_id uuid NOT NULL REFERENCES plugin_mcp_manager_372483a022.mcp_servers(id) ON DELETE CASCADE,
   enabled boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );

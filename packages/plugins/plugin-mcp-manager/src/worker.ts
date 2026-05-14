@@ -1,40 +1,36 @@
+import { randomUUID } from "node:crypto";
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { API_ROUTES, TOOL_NAMES } from "./constants.js";
 
 let db: PluginContext["db"];
 
+function tbl(table: string) {
+  return `${db.namespace}.${table}`;
+}
+
 const plugin = definePlugin({
   async setup(ctx) {
     db = ctx.db;
 
-    // --- Data sources for UI ---
-
     ctx.data.register("mcp-servers-list", async (params) => {
       const companyId = params.companyId as string;
       if (!companyId) return [];
-      const rows = await db.query(
-        `SELECT * FROM ${db.namespace}.mcp_servers WHERE company_id = $1 ORDER BY name`,
-        [companyId],
-      );
-      return rows;
+      return db.query(`SELECT * FROM ${tbl("mcp_servers")} WHERE company_id = $1 ORDER BY name`, [companyId]);
     });
 
     ctx.data.register("agent-mcp-assignments", async (params) => {
       const agentId = params.agentId as string;
       if (!agentId) return [];
-      const rows = await db.query(
+      return db.query(
         `SELECT a.*, s.name, s.display_name, s.transport_type, s.command, s.args, s.transport_url, s.description as server_description
-         FROM ${db.namespace}.agent_mcp_assignments a
-         JOIN ${db.namespace}.mcp_servers s ON s.id = a.mcp_server_id
+         FROM ${tbl("agent_mcp_assignments")} a
+         JOIN ${tbl("mcp_servers")} s ON s.id = a.mcp_server_id
          WHERE a.agent_id = $1
          ORDER BY s.name`,
         [agentId],
       );
-      return rows;
     });
-
-    // --- Tool handlers ---
 
     ctx.tools.register(
       TOOL_NAMES.resolveConfig,
@@ -43,10 +39,7 @@ const plugin = definePlugin({
         description: "Resolve MCP server configuration for an agent",
         parametersSchema: {
           type: "object",
-          properties: {
-            agentId: { type: "string" },
-            companyId: { type: "string" },
-          },
+          properties: { agentId: { type: "string" }, companyId: { type: "string" } },
           required: ["agentId", "companyId"],
         },
       },
@@ -72,9 +65,7 @@ const plugin = definePlugin({
         const { companyId } = params as { companyId: string };
         const servers = await db.query(
           `SELECT id, name, display_name, description, transport_type, enabled
-           FROM ${db.namespace}.mcp_servers
-           WHERE company_id = $1 AND scope = 'company'
-           ORDER BY name`,
+           FROM ${tbl("mcp_servers")} WHERE company_id = $1 AND scope = 'company' ORDER BY name`,
           [companyId],
         );
         return { content: JSON.stringify(servers, null, 2), data: servers };
@@ -90,7 +81,7 @@ const plugin = definePlugin({
         case API_ROUTES.listServers: {
           const companyId = query.companyId as string;
           const rows = await db.query(
-            `SELECT * FROM ${db.namespace}.mcp_servers WHERE company_id = $1 ORDER BY name`,
+            `SELECT * FROM ${tbl("mcp_servers")} WHERE company_id = $1 ORDER BY name`,
             [companyId],
           );
           return { status: 200, body: rows };
@@ -101,95 +92,64 @@ const plugin = definePlugin({
           if (!name || !transportType) {
             return { status: 400, body: { error: "Missing required fields: name, transportType" } };
           }
-          const needsCommand = transportType === "stdio";
-          if (needsCommand && !command) {
+          if (transportType === "stdio" && !command) {
             return { status: 400, body: { error: "stdio transport requires a command" } };
           }
-          const rows = await db.query(
-            `INSERT INTO ${db.namespace}.mcp_servers
-             (company_id, name, display_name, description, command, args, env, transport_type, transport_url, source, scope, agent_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'manual', $10, $11)
-             RETURNING *`,
+          const id = randomUUID();
+          await db.execute(
+            `INSERT INTO ${tbl("mcp_servers")}
+             (id, company_id, name, display_name, description, command, args, env, transport_type, transport_url, source, scope, agent_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'manual', $11, $12)`,
             [
-              companyId,
-              name,
-              displayName || null,
-              description || null,
-              command || null,
-              JSON.stringify(args || []),
-              JSON.stringify(env || {}),
-              transportType,
-              transportUrl || null,
-              scope || "company",
-              agentId || null,
+              id, companyId, name,
+              displayName || null, description || null, command || null,
+              JSON.stringify(args || []), JSON.stringify(env || {}),
+              transportType, transportUrl || null,
+              scope || "company", agentId || null,
             ],
           );
+          const rows = await db.query(`SELECT * FROM ${tbl("mcp_servers")} WHERE id = $1`, [id]);
           return { status: 201, body: rows[0] };
         }
 
         case API_ROUTES.updateServer: {
           const serverId = params.serverId as string;
-          const updates: string[] = [];
-          const values: unknown[] = [];
+          const sets: string[] = [];
+          const vals: unknown[] = [];
           let idx = 1;
 
           for (const [key, col] of [
-            ["name", "name"],
-            ["displayName", "display_name"],
-            ["description", "description"],
-            ["command", "command"],
-            ["transportType", "transport_type"],
-            ["transportUrl", "transport_url"],
+            ["name", "name"], ["displayName", "display_name"], ["description", "description"],
+            ["command", "command"], ["transportType", "transport_type"], ["transportUrl", "transport_url"],
           ] as const) {
-            if (body[key] !== undefined) {
-              updates.push(`${col} = $${idx++}`);
-              values.push(body[key]);
-            }
+            if (body[key] !== undefined) { sets.push(`${col} = $${idx++}`); vals.push(body[key]); }
           }
-          if (body.args !== undefined) {
-            updates.push(`args = $${idx++}`);
-            values.push(JSON.stringify(body.args));
-          }
-          if (body.env !== undefined) {
-            updates.push(`env = $${idx++}`);
-            values.push(JSON.stringify(body.env));
-          }
-          if (body.enabled !== undefined) {
-            updates.push(`enabled = $${idx++}`);
-            values.push(body.enabled);
-          }
+          if (body.args !== undefined) { sets.push(`args = $${idx++}`); vals.push(JSON.stringify(body.args)); }
+          if (body.env !== undefined) { sets.push(`env = $${idx++}`); vals.push(JSON.stringify(body.env)); }
+          if (body.enabled !== undefined) { sets.push(`enabled = $${idx++}`); vals.push(body.enabled); }
 
-          if (updates.length === 0) {
-            return { status: 400, body: { error: "No fields to update" } };
-          }
+          if (sets.length === 0) return { status: 400, body: { error: "No fields to update" } };
 
-          updates.push(`updated_at = now()`);
-          values.push(serverId);
+          sets.push(`updated_at = now()`);
+          vals.push(serverId);
 
-          const rows = await db.query(
-            `UPDATE ${db.namespace}.mcp_servers SET ${updates.join(", ")} WHERE id = $${idx} RETURNING *`,
-            values,
+          await db.execute(
+            `UPDATE ${tbl("mcp_servers")} SET ${sets.join(", ")} WHERE id = $${idx}`,
+            vals,
           );
+          const rows = await db.query(`SELECT * FROM ${tbl("mcp_servers")} WHERE id = $1`, [serverId]);
           if (!rows.length) return { status: 404, body: { error: "MCP server not found" } };
           return { status: 200, body: rows[0] };
         }
 
         case API_ROUTES.deleteServer: {
           const serverId = params.serverId as string;
-          await db.execute(
-            `DELETE FROM ${db.namespace}.agent_mcp_assignments WHERE mcp_server_id = $1`,
-            [serverId],
-          );
-          const rows = await db.query(
-            `DELETE FROM ${db.namespace}.mcp_servers WHERE id = $1 RETURNING *`,
-            [serverId],
-          );
-          if (!rows.length) return { status: 404, body: { error: "MCP server not found" } };
+          await db.execute(`DELETE FROM ${tbl("agent_mcp_assignments")} WHERE mcp_server_id = $1`, [serverId]);
+          await db.execute(`DELETE FROM ${tbl("mcp_servers")} WHERE id = $1`, [serverId]);
           return { status: 200, body: { success: true } };
         }
 
         case API_ROUTES.syncServers: {
-          const { companyId } = body;
           return { status: 200, body: { message: "Sync not yet implemented for plugin context", imported: 0 } };
         }
 
@@ -198,8 +158,8 @@ const plugin = definePlugin({
           const rows = await db.query(
             `SELECT a.*, s.name, s.display_name, s.transport_type, s.command, s.args, s.transport_url,
                     s.description as server_description, s.env
-             FROM ${db.namespace}.agent_mcp_assignments a
-             JOIN ${db.namespace}.mcp_servers s ON s.id = a.mcp_server_id
+             FROM ${tbl("agent_mcp_assignments")} a
+             JOIN ${tbl("mcp_servers")} s ON s.id = a.mcp_server_id
              WHERE a.agent_id = $1
              ORDER BY s.name`,
             [agentId],
@@ -210,30 +170,26 @@ const plugin = definePlugin({
         case API_ROUTES.assignAgentMcp: {
           const agentId = params.agentId as string;
           const { mcpServerId } = body;
-          if (!mcpServerId) {
-            return { status: 400, body: { error: "Missing required field: mcpServerId" } };
-          }
+          if (!mcpServerId) return { status: 400, body: { error: "Missing required field: mcpServerId" } };
+
           const existing = await db.query(
-            `SELECT id FROM ${db.namespace}.agent_mcp_assignments WHERE agent_id = $1 AND mcp_server_id = $2`,
+            `SELECT id FROM ${tbl("agent_mcp_assignments")} WHERE agent_id = $1 AND mcp_server_id = $2`,
             [agentId, mcpServerId],
           );
-          if (existing.length > 0) {
-            return { status: 200, body: existing[0] };
-          }
-          const rows = await db.query(
-            `INSERT INTO ${db.namespace}.agent_mcp_assignments (agent_id, mcp_server_id)
-             VALUES ($1, $2) RETURNING *`,
-            [agentId, mcpServerId],
+          if (existing.length > 0) return { status: 200, body: existing[0] };
+
+          const id = randomUUID();
+          await db.execute(
+            `INSERT INTO ${tbl("agent_mcp_assignments")} (id, agent_id, mcp_server_id) VALUES ($1, $2, $3)`,
+            [id, agentId, mcpServerId],
           );
+          const rows = await db.query(`SELECT * FROM ${tbl("agent_mcp_assignments")} WHERE id = $1`, [id]);
           return { status: 201, body: rows[0] };
         }
 
         case API_ROUTES.removeAgentMcp: {
           const assignmentId = params.assignmentId as string;
-          await db.execute(
-            `DELETE FROM ${db.namespace}.agent_mcp_assignments WHERE id = $1`,
-            [assignmentId],
-          );
+          await db.execute(`DELETE FROM ${tbl("agent_mcp_assignments")} WHERE id = $1`, [assignmentId]);
           return { status: 200, body: { success: true } };
         }
 
@@ -254,8 +210,8 @@ const plugin = definePlugin({
 async function resolveAgentMcpConfig(agentId: string, companyId: string) {
   const rows = await db.query(
     `SELECT s.name, s.command, s.args, s.env, s.transport_type, s.transport_url
-     FROM ${db.namespace}.agent_mcp_assignments a
-     JOIN ${db.namespace}.mcp_servers s ON s.id = a.mcp_server_id
+     FROM ${tbl("agent_mcp_assignments")} a
+     JOIN ${tbl("mcp_servers")} s ON s.id = a.mcp_server_id
      WHERE a.agent_id = $1 AND a.enabled = true AND s.enabled = true AND s.company_id = $2`,
     [agentId, companyId],
   );
@@ -263,10 +219,7 @@ async function resolveAgentMcpConfig(agentId: string, companyId: string) {
   const mcpServers: Record<string, Record<string, unknown>> = {};
   for (const row of rows) {
     if (row.transport_type === "http" || row.transport_type === "sse") {
-      mcpServers[row.name] = {
-        type: row.transport_type,
-        url: row.transport_url || "",
-      };
+      mcpServers[row.name] = { type: row.transport_type, url: row.transport_url || "" };
     } else {
       mcpServers[row.name] = {
         command: row.command,
@@ -275,7 +228,6 @@ async function resolveAgentMcpConfig(agentId: string, companyId: string) {
       };
     }
   }
-
   return { mcpServers };
 }
 

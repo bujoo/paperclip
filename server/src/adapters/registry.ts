@@ -84,6 +84,8 @@ import {
 import {
   execute as bedrockGatewayExecute,
   testEnvironment as bedrockGatewayTestEnvironment,
+  listBedrockSkills,
+  syncBedrockSkills,
 } from "@paperclipai/adapter-bedrock-gateway/server";
 import {
   agentConfigurationDoc as bedrockGatewayAgentConfigurationDoc,
@@ -257,6 +259,8 @@ const bedrockGatewayAdapter: ServerAdapterModule = {
   type: "bedrock_gateway",
   execute: bedrockGatewayExecute,
   testEnvironment: bedrockGatewayTestEnvironment,
+  listSkills: listBedrockSkills,
+  syncSkills: syncBedrockSkills,
   models: bedrockGatewayModels,
   supportsLocalAgentJwt: true,
   supportsInstructionsBundle: true,

@@ -663,6 +663,7 @@ export const PLUGIN_DATABASE_CORE_READ_TABLES = [
   "goals",
   "agents",
   "issues",
+  "documents",
   "issue_documents",
   "issue_relations",
   "issue_comments",

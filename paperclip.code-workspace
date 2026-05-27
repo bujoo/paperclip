@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../gstack"
+		},
+		{
+			"path": "../books"
 		}
 	],
 	"settings": {

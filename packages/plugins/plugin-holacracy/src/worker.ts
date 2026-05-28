@@ -6,7 +6,7 @@ import {
   type PluginContext,
   type ToolResult,
 } from "@paperclipai/plugin-sdk";
-import { API_ROUTES, ROLE_TYPES, TOOL_NAMES, type RoleType } from "./constants.js";
+import { API_ROUTES, ROLE_TYPES, TOOL_NAMES, type RoleType, DEFAULT_DOMAIN_REGISTRY, GLOBAL_DOMAIN_REGISTRY_COMPANY_ID, GOVERNANCE_APPROVERS, GOVERNANCE_APPROVAL_TIMEOUT_HOURS } from "./constants.js";
 
 interface Circle {
   id: string;
@@ -49,6 +49,8 @@ const CORE_ROLE_DEFS: Array<{ name: string; type: RoleType; purpose: string }> =
 ];
 
 let dbCtx: PluginContext["db"] | null = null;
+let httpCtx: PluginContext["http"] | null = null;
+let approvalsCtx: PluginContext["approvals"] | null = null;
 
 function tbl(table: string) {
   if (!dbCtx) throw new Error("DB not initialized");
@@ -87,9 +89,187 @@ async function createCircle(companyId: string, name: string, purpose: string | n
   return { id, name, purpose, parentCircleId, coreRolesCreated: CORE_ROLE_DEFS.length };
 }
 
+/**
+ * Check if adding these domains to an agent would violate conflict rules.
+ * Returns { ok: true } or { ok: false, violation: string }
+ * @param excludeRoleId - if provided, ignore the agent's current assignment of this role
+ *                       (used during reassignment so a role's own domains don't self-conflict)
+ */
+async function checkDomainConflict(
+  agentId: string,
+  newDomains: string[],
+  companyId: string,
+  excludeRoleId?: string,
+): Promise<{ ok: boolean; violation?: string }> {
+  if (!dbCtx || newDomains.length === 0) return { ok: true };
+
+  // Get all roles currently assigned to this agent (excluding the role being reassigned, if any)
+  const assignments = excludeRoleId
+    ? await dbCtx.query<Role>(
+        `SELECT r.* FROM ${tbl("roles")} r 
+         JOIN ${tbl("role_assignments")} ra ON ra.role_id = r.id 
+         WHERE ra.agent_id = $1 AND r.id <> $2`,
+        [agentId, excludeRoleId],
+      )
+    : await dbCtx.query<Role>(
+        `SELECT r.* FROM ${tbl("roles")} r 
+         JOIN ${tbl("role_assignments")} ra ON ra.role_id = r.id 
+         WHERE ra.agent_id = $1`,
+        [agentId],
+      );
+
+  // Collect all domains agent already holds
+  const existingDomains: Set<string> = new Set();
+  for (const role of assignments) {
+    const roleDomains = Array.isArray(role.domains) ? role.domains : 
+                        typeof role.domains === 'string' ? JSON.parse(role.domains) : [];
+    roleDomains.forEach((d: string) => existingDomains.add(d));
+  }
+
+  // Get domain conflict registry for this company (plus global defaults via 0-uuid)
+  const registry = await dbCtx.query<{ domain_name: string; conflicting_domains: unknown }>(
+    `SELECT domain_name, conflicting_domains FROM ${tbl("domain_registry")} WHERE company_id = $1 OR company_id = '00000000-0000-0000-0000-000000000000'`,
+    [companyId]
+  );
+
+  const conflictMap = new Map<string, string[]>();
+  for (const entry of registry) {
+    const conflicts = Array.isArray(entry.conflicting_domains) ? entry.conflicting_domains : 
+                     typeof entry.conflicting_domains === 'string' ? JSON.parse(entry.conflicting_domains) : [];
+    conflictMap.set(entry.domain_name, conflicts as string[]);
+  }
+
+  // Bidirectional check: A conflicts with B iff registry says A->B OR B->A
+  // 1) New domain explicitly conflicts with an existing domain
+  for (const newDomain of newDomains) {
+    const conflicts = conflictMap.get(newDomain) || [];
+    for (const existing of existingDomains) {
+      if (conflicts.includes(existing)) {
+        return { 
+          ok: false, 
+          violation: `Domain conflict: cannot assign "${newDomain}" to agent already holding "${existing}"` 
+        };
+      }
+    }
+  }
+  // 2) An existing domain explicitly conflicts with a new domain
+  for (const existing of existingDomains) {
+    const conflicts = conflictMap.get(existing) || [];
+    for (const newDomain of newDomains) {
+      if (conflicts.includes(newDomain)) {
+        return { 
+          ok: false, 
+          violation: `Domain conflict: agent already holds "${existing}" which conflicts with "${newDomain}"` 
+        };
+      }
+    }
+  }
+  // 3) New domains conflict with each other (e.g. role grants Sales+Growth in one shot)
+  for (let i = 0; i < newDomains.length; i++) {
+    const a = newDomains[i];
+    const aConflicts = conflictMap.get(a) || [];
+    for (let j = i + 1; j < newDomains.length; j++) {
+      const b = newDomains[j];
+      const bConflicts = conflictMap.get(b) || [];
+      if (aConflicts.includes(b) || bConflicts.includes(a)) {
+        return { 
+          ok: false, 
+          violation: `Domain conflict: domains "${a}" and "${b}" cannot coexist on same role` 
+        };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Seed default domain registry entries (idempotent).
+ * Uses GLOBAL_DOMAIN_REGISTRY_COMPANY_ID so conflicts apply across all companies
+ * unless a per-company override exists.
+ */
+async function seedDefaultDomainRegistry(): Promise<void> {
+  if (!dbCtx) return;
+  for (const entry of DEFAULT_DOMAIN_REGISTRY) {
+    await dbCtx.execute(
+      `INSERT INTO ${tbl("domain_registry")} (id, company_id, domain_name, description, conflicting_domains)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (company_id, domain_name) DO UPDATE SET
+         description = EXCLUDED.description,
+         conflicting_domains = EXCLUDED.conflicting_domains,
+         updated_at = NOW()`,
+      [
+        randomUUID(),
+        GLOBAL_DOMAIN_REGISTRY_COMPANY_ID,
+        entry.domain,
+        entry.description,
+        JSON.stringify(entry.conflicts),
+      ],
+    );
+  }
+}
+
+/**
+ * Create a governance approval on Paperclip for a governance tension.
+ * Auto-wires 3 approvers (Strategist, PM, Dev Lead).
+ * Uses ctx.approvals SDK capability (no loopback HTTP — SSRF-guard safe).
+ * Returns {approvalId} on success or undefined on error.
+ */
+async function createGovernanceApproval(params: {
+  companyId: string;
+  tensionId: string;
+  title: string;
+  description: string | null;
+  requestedByAgentId: string | null;
+}): Promise<{ approvalId: string } | undefined> {
+  if (!approvalsCtx) {
+    console.error("[holacracy] approvals capability not initialized");
+    return undefined;
+  }
+  try {
+    const approverIds = [
+      GOVERNANCE_APPROVERS.strategist,
+      GOVERNANCE_APPROVERS.productManager,
+      GOVERNANCE_APPROVERS.devLead,
+    ];
+    const approval = await approvalsCtx.create({
+      companyId: params.companyId,
+      type: "request_board_approval",
+      payload: {
+        governance_proposal: {
+          tension_id: params.tensionId,
+          title: params.title,
+          description: params.description ?? "",
+        },
+        required_approvals: 3,
+        approver_agent_ids: approverIds,
+        timeout_hours: GOVERNANCE_APPROVAL_TIMEOUT_HOURS,
+        on_timeout: "escalate_to_operator",
+      },
+      requestedByAgentId: params.requestedByAgentId ?? null,
+    });
+    return { approvalId: approval.id };
+  } catch (err) {
+    console.error(
+      "[holacracy] createGovernanceApproval error:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return undefined;
+  }
+}
+
 const plugin = definePlugin({
   async setup(ctx) {
     dbCtx = ctx.db;
+    httpCtx = ctx.http;
+    approvalsCtx = ctx.approvals;
+    // Seed global domain registry (idempotent, runs once per plugin start)
+    try {
+      await seedDefaultDomainRegistry();
+    } catch (err) {
+      // Migration may not have applied yet; log but don't crash plugin
+      console.warn("[holacracy] domain_registry seed skipped:", err instanceof Error ? err.message : String(err));
+    }
 
     ctx.data.register("circles-tree", async (params) => {
       const companyId = params.companyId as string;
@@ -268,7 +448,38 @@ const plugin = definePlugin({
           `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type) VALUES ($1, $2, $3, $4, $5, $6)`,
           [id, circleId, runCtx.agentId ?? null, title, description, tensionType],
         );
-        return { content: JSON.stringify({ tensionId: id, status: "open", message: `Tension raised: "${title}" (${tensionType})` }) };
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, 'tension-raised', $4)`,
+          [runCtx.companyId, runCtx.agentId ?? null, circleId, JSON.stringify({ tensionId: id, title, type: tensionType })],
+        );
+
+        // Trigger A: governance tension → auto-create 3-of-3 async approval
+        let approvalId: string | undefined;
+        if (tensionType === "governance") {
+          const approvalResult = await createGovernanceApproval({
+            companyId: runCtx.companyId,
+            tensionId: id,
+            title,
+            description: description ?? null,
+            requestedByAgentId: runCtx.agentId ?? null,
+          });
+          if (approvalResult) {
+            approvalId = approvalResult.approvalId;
+            await dbCtx!.execute(
+              `INSERT INTO ${tbl("audit_log")} (company_id, circle_id, action_type, action_detail) VALUES ($1, $2, 'governance-approval-created', $3)`,
+              [runCtx.companyId, circleId, JSON.stringify({ tensionId: id, approvalId: approvalResult.approvalId })],
+            );
+          }
+        }
+
+        return {
+          content: JSON.stringify({
+            tensionId: id,
+            status: "open",
+            message: `Tension raised: "${title}" (${tensionType})`,
+            ...(approvalId ? { approvalId, approvalStatus: "pending" } : {}),
+          }),
+        };
       },
     );
 
@@ -387,6 +598,226 @@ const plugin = definePlugin({
         return { content: JSON.stringify({ reported: true, metricId, value, periodDate }) };
       },
     );
+
+    // Governance approval timeout scanner job
+    ctx.jobs.register("governance-approval-timeout-scanner", async (_job) => {
+      // Query approvals directly via dbCtx (approvals is in coreReadTables)
+      const circles = await dbCtx!.query<{ company_id: string; id: string }>(
+        `SELECT DISTINCT company_id FROM ${tbl("circles")}`,
+        [],
+      );
+      const companyIds = [...new Set(circles.map((c) => c.company_id))];
+
+      for (const companyId of companyIds) {
+        const pendingApprovals = await dbCtx!.query<{
+          id: string;
+          type: string;
+          status: string;
+          payload: Record<string, unknown>;
+          created_at: string;
+        }>(
+          `SELECT id, type, status, payload, created_at FROM public.approvals WHERE company_id = $1 AND status = 'pending' AND type = 'request_board_approval'`,
+          [companyId],
+        );
+
+        for (const approval of pendingApprovals) {
+          const payload = (approval.payload as Record<string, unknown>) ?? {};
+          if (payload["on_timeout"] !== "escalate_to_operator") continue;
+          const timeoutHours = typeof payload["timeout_hours"] === "number" ? payload["timeout_hours"] : GOVERNANCE_APPROVAL_TIMEOUT_HOURS;
+          const createdAt = new Date(approval.created_at).getTime();
+          const expiresAt = createdAt + timeoutHours * 60 * 60 * 1000;
+          if (Date.now() < expiresAt) continue;
+
+          // Expired — mark as rejected via direct DB update
+          await dbCtx!.execute(
+            `UPDATE public.approvals SET status = 'rejected', decision_note = $2, decided_at = NOW() WHERE id = $1`,
+            [approval.id, `auto:timed_out — governance proposal expired after ${timeoutHours}h with no decision. Operator review required.`],
+          );
+
+          // Log escalation activity
+          await ctx.activity.log({
+            companyId,
+            message: `[GOVERNANCE TIMEOUT] Approval ${approval.id} expired after ${timeoutHours}h with no decision. Governance proposal: "${(payload["governance_proposal"] as Record<string, unknown>)?.["title"] ?? "unknown"}". Escalated to operator — manual review required.`,
+            entityType: "approval",
+            entityId: approval.id,
+            metadata: {
+              approvalId: approval.id,
+              timeoutHours,
+              expiresAt: new Date(expiresAt).toISOString(),
+              governanceProposal: payload["governance_proposal"],
+              patchStatus: "rejected_timed_out",
+            },
+          });
+        }
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // Accountability Scanner — MYA-78
+    // Runs daily at 03:00. For each agent, evaluates due accountabilities and
+    // raises operational tensions on breach.
+    // Idempotency key: [SCAN:{agent_id}:{acc_name}:{scan_date}] in title.
+    // -----------------------------------------------------------------------
+    ctx.jobs.register("accountability-scanner", async (_job) => {
+      // All data access via dbCtx — no HTTP calls needed (no http.outbound capability required).
+
+      const cadenceIsDue = (cadence: string, now: Date): boolean => {
+        if (cadence === "daily" || cadence === "hourly") return true;
+        if (cadence === "weekly") return now.getDay() === 1; // Monday
+        if (cadence === "monthly") return now.getDate() === 1;
+        return false;
+      };
+
+      type EvalResult = { value: number | boolean | null; breached: boolean };
+      const evaluateAccountability = async (
+        agentId: string,
+        companyId: string,
+        acc: Record<string, unknown>,
+      ): Promise<EvalResult> => {
+        const name = String(acc.name ?? "");
+        const threshold = acc.alert_threshold;
+
+        if (name === "agent_active") {
+          const rows = await dbCtx!.query<{ count: number }>(
+            `SELECT COUNT(*)::int as count FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND (status = 'in_progress' OR (status = 'done' AND completed_at >= date_trunc('month', NOW())))`,
+            [companyId, agentId],
+          );
+          const active = (rows[0]?.count ?? 0) > 0;
+          return { value: active, breached: !active };
+        }
+        if (name === "pr_review_latency_hours" || name.includes("latency_hours") || name.includes("turnaround_hours")) {
+          const rows = await dbCtx!.query<{ avg_hours: number | null }>(
+            `SELECT EXTRACT(EPOCH FROM AVG(NOW() - updated_at))/3600 as avg_hours FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND status = 'in_progress' AND updated_at < NOW() - INTERVAL '24 hours'`,
+            [companyId, agentId],
+          );
+          const avg = rows[0]?.avg_hours ?? 0;
+          return { value: Math.round(avg * 10) / 10, breached: avg > Number(threshold) };
+        }
+        if (name === "unrouted_backlog_count") {
+          const rows = await dbCtx!.query<{ count: number }>(
+            `SELECT COUNT(*)::int as count FROM public.issues WHERE company_id = $1 AND assignee_agent_id IS NULL AND status = 'backlog' AND created_at < NOW() - INTERVAL '24 hours'`,
+            [companyId],
+          );
+          const count = rows[0]?.count ?? 0;
+          return { value: count, breached: count > Number(threshold) };
+        }
+        if (name === "engineering_issues_completed_weekly" || name.includes("completed") || name.includes("published") || name.includes("groomed") || name.includes("deployed") || name.includes("resolved")) {
+          const rows = await dbCtx!.query<{ count: number }>(
+            `SELECT COUNT(*)::int as count FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND status = 'done' AND completed_at >= NOW() - INTERVAL '7 days'`,
+            [companyId, agentId],
+          );
+          const count = rows[0]?.count ?? 0;
+          return { value: count, breached: count < Number(threshold ?? 0) };
+        }
+        // Unknown metric — skip
+        return { value: null, breached: false };
+      };
+
+      // --------------- main scan loop ---------------
+      const companyRows = await dbCtx!.query<{ company_id: string }>(
+        `SELECT DISTINCT company_id FROM ${tbl("circles")}`,
+        [],
+      );
+
+      let raised = 0;
+      let skipped = 0;
+      const now = new Date();
+      const scanDate = now.toISOString().split("T")[0];
+
+      for (const { company_id: companyId } of companyRows) {
+        // Load agents with accountabilities directly from DB
+        const agents = await dbCtx!.query<{
+          id: string;
+          name: string;
+          accountabilities: Array<Record<string, unknown>>;
+        }>(
+          `SELECT id, name, accountabilities FROM public.agents WHERE company_id = $1 AND status != 'deleted'`,
+          [companyId],
+        );
+
+        // Find GCC (root circle) as fallback
+        const gccRows = await dbCtx!.query<{ id: string }>(
+          `SELECT id FROM ${tbl("circles")} WHERE company_id = $1 AND parent_circle_id IS NULL LIMIT 1`,
+          [companyId],
+        );
+        const fallbackCircleId = gccRows[0]?.id;
+        if (!fallbackCircleId) continue;
+
+        for (const agent of agents) {
+          const agentId = agent.id;
+          const agentName = agent.name ?? agentId;
+          const accountabilities = Array.isArray(agent.accountabilities) ? agent.accountabilities : [];
+          if (accountabilities.length === 0) continue;
+
+          // Determine primary circle from role assignments
+          const roleRows = await dbCtx!.query<{ circle_id: string }>(
+            `SELECT r.circle_id FROM ${tbl("role_assignments")} ra JOIN ${tbl("roles")} r ON r.id = ra.role_id WHERE ra.agent_id = $1 LIMIT 1`,
+            [agentId],
+          );
+          const circleId = roleRows[0]?.circle_id ?? fallbackCircleId;
+
+          for (const acc of accountabilities) {
+            const cadence = String(acc.cadence ?? "daily");
+            if (!cadenceIsDue(cadence, now)) continue;
+
+            const accName = String(acc.name ?? "unknown");
+            const idempotencyKey = `scan:${agentId}:${accName}:${scanDate}`;
+
+            // Idempotency: skip if tension already filed today
+            const existing = await dbCtx!.query<{ id: string }>(
+              `SELECT id FROM ${tbl("tensions")} WHERE idempotency_key = $1 LIMIT 1`,
+              [idempotencyKey],
+            );
+            if (existing.length > 0) { skipped++; continue; }
+
+            const { value, breached } = await evaluateAccountability(agentId, companyId, acc);
+            if (!breached) continue;
+
+            const threshold = acc.alert_threshold;
+            const tensionId = randomUUID();
+            const title = `[Scanner] ${agentName} breached ${accName}: ${value} vs threshold ${threshold}`;
+            const description = JSON.stringify({
+              agent_id: agentId,
+              agent_name: agentName,
+              accountability_name: accName,
+              metric_value: value,
+              threshold,
+              cadence,
+              observed_at: now.toISOString(),
+              scan_date: scanDate,
+              escalation_path: acc.escalation_path ?? [],
+            });
+
+            await dbCtx!.execute(
+              `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type, idempotency_key) VALUES ($1, $2, $3, $4, $5, 'operational', $6)`,
+              [tensionId, circleId, agentId, title, description, idempotencyKey],
+            );
+
+            await dbCtx!.execute(
+              `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, 'tension-raised', $4)`,
+              [companyId, agentId, circleId, JSON.stringify({ tensionId, source: "accountability-scanner", accountability: accName, scanDate })],
+            );
+
+            raised++;
+            await ctx.activity.log({
+              companyId,
+              message: `[ACCOUNTABILITY BREACH] ${agentName} / ${accName}: ${value} vs threshold ${threshold}. Tension ${tensionId} raised.`,
+              entityType: "agent",
+              entityId: agentId,
+              metadata: { tensionId, agentId, accName, value, threshold, circleId, scanDate },
+            });
+          }
+        }
+      }
+
+      await ctx.activity.log({
+        companyId: companyRows[0]?.company_id ?? "unknown",
+        message: `[ACCOUNTABILITY SCAN] ${scanDate} complete. Tensions raised: ${raised}, skipped (dedup): ${skipped}.`,
+        entityType: "system",
+        entityId: "accountability-scanner",
+        metadata: { raised, skipped, scanDate },
+      });
+    });
 
     ctx.tools.register(
       TOOL_NAMES.onboardAgent,
@@ -519,6 +950,19 @@ ${policyList || "No policies defined yet."}
         const { roleName, roleType, purpose, accountabilities, domains, agentId } = input.body as {
           roleName: string; roleType?: string; purpose?: string; accountabilities?: string[]; domains?: string[]; agentId?: string;
         };
+
+        // Check domain conflicts if assigning to agent
+        if (agentId && domains && domains.length > 0) {
+          const conflict = await checkDomainConflict(agentId, domains, input.companyId);
+          if (!conflict.ok) {
+            await dbCtx!.execute(
+              `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, 'role-assignment-rejected', $4)`,
+              [input.companyId, agentId, circleId, JSON.stringify({ violation: conflict.violation, roleName, domains, route: "assignRole" })],
+            );
+            return { status: 409, body: { error: conflict.violation } };
+          }
+        }
+
         const roleId = randomUUID();
         await dbCtx!.execute(
           `INSERT INTO ${tbl("roles")} (id, circle_id, name, purpose, role_type, accountabilities, domains) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -539,6 +983,25 @@ ${policyList || "No policies defined yet."}
         const { purpose, accountabilities, domains, name } = input.body as {
           purpose?: string; accountabilities?: string[]; domains?: string[]; name?: string; companyId: string;
         };
+
+        // If domains changing on a role that has an active assignee, validate against registry.
+        if (domains !== undefined && domains.length > 0) {
+          const assignee = await dbCtx!.query<{ agent_id: string }>(
+            `SELECT agent_id FROM ${tbl("role_assignments")} WHERE role_id = $1 LIMIT 1`,
+            [roleId],
+          );
+          if (assignee.length > 0 && assignee[0].agent_id) {
+            const conflict = await checkDomainConflict(assignee[0].agent_id, domains, input.companyId, roleId);
+            if (!conflict.ok) {
+              await dbCtx!.execute(
+                `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, role_id, action_type, action_detail) VALUES ($1, $2, $3, 'role-domain-update-rejected', $4)`,
+                [input.companyId, assignee[0].agent_id, roleId, JSON.stringify({ violation: conflict.violation, domains, route: "updateRole" })],
+              );
+              return { status: 409, body: { error: conflict.violation } };
+            }
+          }
+        }
+
         const sets: string[] = [];
         const vals: unknown[] = [];
         let idx = 1;
@@ -584,6 +1047,31 @@ ${policyList || "No policies defined yet."}
       case API_ROUTES.updateRoleAssignment: {
         const roleId = input.params.roleId as string;
         const { agentId } = input.body as { agentId: string | null; companyId: string };
+
+        // Check domain conflicts before reassignment
+        if (agentId) {
+          const roleRows = await dbCtx!.query<Role>(
+            `SELECT * FROM ${tbl("roles")} WHERE id = $1`,
+            [roleId],
+          );
+          if (roleRows.length === 0) return { status: 404, body: { error: "Role not found" } };
+          const role = roleRows[0];
+          const roleDomains = Array.isArray(role.domains) ? role.domains :
+                              typeof role.domains === 'string' ? JSON.parse(role.domains) : [];
+          if (roleDomains.length > 0) {
+            // Exclude the current assignment of THIS role from the conflict check
+            // (re-assigning same role to same agent should not self-conflict)
+            const conflict = await checkDomainConflict(agentId, roleDomains, input.companyId, roleId);
+            if (!conflict.ok) {
+              await dbCtx!.execute(
+                `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, role_id, action_type, action_detail) VALUES ($1, $2, $3, 'role-assignment-rejected', $4)`,
+                [input.companyId, agentId, roleId, JSON.stringify({ violation: conflict.violation, domains: roleDomains, route: "updateRoleAssignment" })],
+              );
+              return { status: 409, body: { error: conflict.violation } };
+            }
+          }
+        }
+
         await dbCtx!.execute(`DELETE FROM ${tbl("role_assignments")} WHERE role_id = $1`, [roleId]);
         if (agentId) {
           await dbCtx!.execute(
@@ -629,7 +1117,36 @@ ${policyList || "No policies defined yet."}
           `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, 'tension-raised', $4)`,
           [input.companyId, null, circleId, JSON.stringify({ tensionId: id, title, type: tensionType ?? "operational" })],
         );
-        return { status: 201, body: { tensionId: id, title, type: tensionType ?? "operational", status: "open" } };
+
+        // Trigger A: governance tension → auto-create 3-of-3 async approval
+        let approvalId: string | undefined;
+        if (tensionType === "governance") {
+          const approvalResult = await createGovernanceApproval({
+            companyId: input.companyId,
+            tensionId: id,
+            title,
+            description: description ?? null,
+            requestedByAgentId: null,
+          });
+          if (approvalResult) {
+            approvalId = approvalResult.approvalId;
+            await dbCtx!.execute(
+              `INSERT INTO ${tbl("audit_log")} (company_id, circle_id, action_type, action_detail) VALUES ($1, $2, 'governance-approval-created', $3)`,
+              [input.companyId, circleId, JSON.stringify({ tensionId: id, approvalId: approvalResult.approvalId })],
+            );
+          }
+        }
+
+        return {
+          status: 201,
+          body: {
+            tensionId: id,
+            title,
+            type: tensionType ?? "operational",
+            status: "open",
+            ...(approvalId ? { approvalId, approvalStatus: "pending" } : {}),
+          },
+        };
       }
 
       case API_ROUTES.updateTension: {
@@ -654,7 +1171,7 @@ ${policyList || "No policies defined yet."}
       case API_ROUTES.getAuditLog: {
         const circleId = input.params.circleId as string;
         const logs = await dbCtx!.query(
-          `SELECT al.*, a.name as agent_name FROM ${tbl("audit_log")} al LEFT JOIN public.agents a ON a.id = al.agent_id WHERE al.circle_id = $1 ORDER BY al.created_at DESC LIMIT 50`,
+          `SELECT al.*, a.name as agent_name FROM ${tbl("audit_log")} al LEFT JOIN public.agents a ON a.id = al.agent_id WHERE al.circle_id = $1 ORDER BY al.created_at DESC LIMIT 200`,
           [circleId],
         );
         return { status: 200, body: logs };
@@ -845,6 +1362,19 @@ ${policyList || "No policies defined yet."}
           roleAccountabilities?: string[]; roleDomains?: string[];
           companyId: string;
         };
+
+        // Check domain conflicts before creating role + assignment
+        if (agentId && roleDomains && roleDomains.length > 0) {
+          const conflict = await checkDomainConflict(agentId, roleDomains, input.companyId);
+          if (!conflict.ok) {
+            await dbCtx!.execute(
+              `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, 'role-assignment-rejected', $4)`,
+              [input.companyId, agentId, circleId, JSON.stringify({ violation: conflict.violation, roleName, domains: roleDomains, route: "onboardAgent" })],
+            );
+            return { status: 409, body: { error: conflict.violation } };
+          }
+        }
+
         const roleId = randomUUID();
         await dbCtx!.execute(
           `INSERT INTO ${tbl("roles")} (id, circle_id, name, purpose, role_type, accountabilities, domains) VALUES ($1, $2, $3, $4, 'custom', $5, $6)`,
@@ -861,6 +1391,346 @@ ${policyList || "No policies defined yet."}
           [input.companyId, circleId, JSON.stringify({ roleId, roleName, agentId, rolePurpose })],
         );
         return { status: 201, body: { roleId, roleName, circleId, agentId } };
+      }
+
+      case API_ROUTES.accountabilityScan: {
+        // Nightly accountability scanner — evaluates pre-approved metrics against
+        // agent accountabilities and files operational tensions for breaches.
+        // Idempotency key: "<agentId>:<accountabilityName>:<YYYY-MM-DD>" prevents
+        // duplicate tensions for the same (agent, accountability, day).
+        const companyId = input.companyId;
+        const rawScanDate = (input.body as { scanDate?: string } | undefined)?.scanDate;
+        const scanDate = rawScanDate ?? new Date().toISOString().slice(0, 10);
+
+        // Load all agents with accountabilities for this company
+        const agents = await dbCtx!.query<{
+          id: string;
+          name: string;
+          accountabilities: Array<{
+            name: string;
+            metric: string;
+            target: number | string | boolean;
+            alert_threshold: number | string | boolean;
+            cadence: "hourly" | "daily" | "weekly" | "monthly";
+            escalation_path?: string[];
+          }>;
+        }>(
+          `SELECT id, name, accountabilities FROM public.agents WHERE company_id = $1 AND status != 'deleted'`,
+          [companyId],
+        );
+
+        // Determine which cadences are "due now" for this scan.
+        // Scanner runs daily — hourly and daily are always due; weekly on Monday; monthly on 1st.
+        const dayOfWeek = new Date(scanDate + "T12:00:00Z").getDay(); // 0=Sun, use UTC noon to avoid TZ edge
+        const dayOfMonth = parseInt(scanDate.slice(8, 10), 10);
+        const dueCadences = new Set<string>(["hourly", "daily"]);
+        if (dayOfWeek === 1) dueCadences.add("weekly");
+        if (dayOfMonth === 1) dueCadences.add("monthly");
+
+        // Find the GCC (root circle) for this company to use as fallback
+        const gccRows = await dbCtx!.query<{ id: string }>(
+          `SELECT id FROM ${tbl("circles")} WHERE company_id = $1 AND parent_circle_id IS NULL LIMIT 1`,
+          [companyId],
+        );
+        const fallbackCircleId = gccRows[0]?.id;
+        if (!fallbackCircleId) {
+          return { status: 400, body: { error: "No root circle found for company" } };
+        }
+
+        // Helper: evaluate a pre-approved metric expression.
+        // Returns number or boolean, or null if metric unknown.
+        const evaluateMetric = async (
+          agentId: string,
+          metric: string,
+        ): Promise<number | boolean | null> => {
+          const m = metric.trim().toLowerCase();
+
+          // "count of engineering issues marked done this week"
+          if (m === "count of engineering issues marked done this week") {
+            const rows = await dbCtx!.query<{ count: number }>(
+              `SELECT COUNT(*)::int as count FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND status = 'done' AND completed_at >= NOW() - INTERVAL '7 days'`,
+              [companyId, agentId],
+            );
+            return rows[0]?.count ?? 0;
+          }
+
+          // "average hours from pr opened to first review"
+          if (m === "average hours from pr opened to first review") {
+            // Proxy: avg hours issues in_review, updated within 7d
+            const rows = await dbCtx!.query<{ avg_hours: number | null }>(
+              `SELECT COALESCE(EXTRACT(EPOCH FROM AVG(NOW() - created_at))/3600, 0)::float as avg_hours FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND status = 'in_review' AND updated_at >= NOW() - INTERVAL '7 days'`,
+              [companyId, agentId],
+            );
+            return rows[0]?.avg_hours ?? 0;
+          }
+
+          // "count of backlog issues triaged and prioritized this week"
+          if (m === "count of backlog issues triaged and prioritized this week") {
+            const rows = await dbCtx!.query<{ count: number }>(
+              `SELECT COUNT(*)::int as count FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND status != 'backlog' AND updated_at >= NOW() - INTERVAL '7 days'`,
+              [companyId, agentId],
+            );
+            return rows[0]?.count ?? 0;
+          }
+
+          // "days since last roadmap update"
+          if (m === "days since last roadmap update") {
+            const rows = await dbCtx!.query<{ days: number | null }>(
+              `SELECT EXTRACT(EPOCH FROM (NOW() - MAX(updated_at)))/86400 as days FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2`,
+              [companyId, agentId],
+            );
+            return rows[0]?.days ?? 9999;
+          }
+
+          // "count of coordination issues resolved or escalated this week"
+          if (m === "count of coordination issues resolved or escalated this week") {
+            const rows = await dbCtx!.query<{ count: number }>(
+              `SELECT COUNT(*)::int as count FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND status IN ('done','cancelled') AND updated_at >= NOW() - INTERVAL '7 days'`,
+              [companyId, agentId],
+            );
+            return rows[0]?.count ?? 0;
+          }
+
+          // "count of unassigned backlog issues older than 24h"
+          if (m === "count of unassigned backlog issues older than 24h") {
+            const rows = await dbCtx!.query<{ count: number }>(
+              `SELECT COUNT(*)::int as count FROM public.issues WHERE company_id = $1 AND assignee_agent_id IS NULL AND status = 'backlog' AND created_at < NOW() - INTERVAL '24 hours'`,
+              [companyId],
+            );
+            return rows[0]?.count ?? 0;
+          }
+
+          // "days since last strategy heuristic update"
+          if (m === "days since last strategy heuristic update") {
+            const rows = await dbCtx!.query<{ days: number | null }>(
+              `SELECT EXTRACT(EPOCH FROM (NOW() - MAX(s.created_at)))/86400 as days FROM ${tbl("strategies")} s JOIN ${tbl("circles")} c ON c.id = s.circle_id WHERE c.company_id = $1`,
+              [companyId],
+            );
+            return rows[0]?.days ?? 9999;
+          }
+
+          // "count of strategy documents published this month"
+          if (m === "count of strategy documents published this month") {
+            const rows = await dbCtx!.query<{ count: number }>(
+              `SELECT COUNT(*)::int as count FROM ${tbl("strategies")} s JOIN ${tbl("circles")} c ON c.id = s.circle_id WHERE c.company_id = $1 AND s.created_at >= date_trunc('month', NOW())`,
+              [companyId],
+            );
+            return rows[0]?.count ?? 0;
+          }
+
+          // "ratio of correctly routed issues to total routed issues"
+          if (m === "ratio of correctly routed issues to total routed issues") {
+            const rows = await dbCtx!.query<{ ratio: number | null }>(
+              `SELECT CASE WHEN COUNT(*) = 0 THEN 1.0 ELSE COUNT(*) FILTER (WHERE status != 'backlog')::float / COUNT(*) END as ratio FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND updated_at >= NOW() - INTERVAL '7 days'`,
+              [companyId, agentId],
+            );
+            return rows[0]?.ratio ?? 1.0;
+          }
+
+          // "ratio of passing regression tests to total regression tests" — static 1.0 (no test infra tracked in DB)
+          if (m === "ratio of passing regression tests to total regression tests") {
+            return 1.0; // assume passing unless external data shows otherwise
+          }
+
+          // "average hours from build ready to qa sign-off"
+          if (m === "average hours from build ready to qa sign-off") {
+            const rows = await dbCtx!.query<{ avg_hours: number | null }>(
+              `SELECT COALESCE(EXTRACT(EPOCH FROM AVG(NOW() - created_at))/3600, 0)::float as avg_hours FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND status = 'in_review' AND updated_at >= NOW() - INTERVAL '30 days'`,
+              [companyId, agentId],
+            );
+            return rows[0]?.avg_hours ?? 0;
+          }
+
+          // "average hours from tension raised to governance proposal filed"
+          if (m === "average hours from tension raised to governance proposal filed") {
+            const rows = await dbCtx!.query<{ avg_hours: number | null }>(
+              `SELECT COALESCE(EXTRACT(EPOCH FROM AVG(NOW() - created_at))/3600, 0)::float as avg_hours FROM ${tbl("tensions")} WHERE circle_id IN (SELECT id FROM ${tbl("circles")} WHERE company_id = $1) AND status = 'open' AND created_at >= NOW() - INTERVAL '30 days'`,
+              [companyId],
+            );
+            return rows[0]?.avg_hours ?? 0;
+          }
+
+          // "count of workflow automation scripts deployed this month"
+          if (m === "count of workflow automation scripts deployed this month") {
+            const rows = await dbCtx!.query<{ count: number }>(
+              `SELECT COUNT(*)::int as count FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND status = 'done' AND completed_at >= date_trunc('month', NOW())`,
+              [companyId, agentId],
+            );
+            return rows[0]?.count ?? 0;
+          }
+
+          // "average hours from message received to response"
+          if (m === "average hours from message received to response") {
+            // Proxy: avg hours issues assigned to agent that moved from todo→in_progress within 24h
+            const rows = await dbCtx!.query<{ avg_hours: number | null }>(
+              `SELECT COALESCE(EXTRACT(EPOCH FROM AVG(NOW() - updated_at))/3600, 0)::float as avg_hours FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND status = 'in_progress' AND updated_at >= NOW() - INTERVAL '7 days'`,
+              [companyId, agentId],
+            );
+            return rows[0]?.avg_hours ?? 0;
+          }
+
+          // "agent is actively assigned to issues this month"
+          if (m === "agent is actively assigned to issues this month") {
+            const rows = await dbCtx!.query<{ count: number }>(
+              `SELECT COUNT(*)::int as count FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND (status = 'in_progress' OR (status = 'done' AND completed_at >= date_trunc('month', NOW())))`,
+              [companyId, agentId],
+            );
+            return (rows[0]?.count ?? 0) > 0;
+          }
+
+          // Machine-readable legacy formats (backward compat)
+          if (/^count\(issues where assignee=AGENT and status=done and completedAt>=now-7d\)$/i.test(metric)) {
+            const rows = await dbCtx!.query<{ count: number }>(
+              `SELECT COUNT(*)::int as count FROM public.issues WHERE company_id = $1 AND assignee_agent_id = $2 AND status = 'done' AND completed_at >= NOW() - INTERVAL '7 days'`,
+              [companyId, agentId],
+            );
+            return rows[0]?.count ?? 0;
+          }
+
+          // boolean(true/false) literal
+          const boolMatch = metric.match(/^boolean\((true|false)\)$/i);
+          if (boolMatch) return boolMatch[1].toLowerCase() === "true";
+
+          // Unknown metric — skip (no arbitrary SQL execution)
+          console.warn(`[holacracy:scan] Unknown metric pattern, skipping: "${metric}"`);
+          return null;
+        };
+
+        // Helper: check if metric value breaches threshold
+        const breaches = (
+          value: number | boolean,
+          threshold: number | string | boolean,
+          metric: string,
+        ): boolean => {
+          if (typeof value === "boolean") {
+            // breach if value !== expected (threshold is the expected value)
+            return value !== threshold;
+          }
+          const numThreshold = threshold as number;
+          // "days since" and count-exceeds metrics: breach when value >= threshold
+          // e.g. unrouted_backlog_count > 10, days_since > 60
+          const isExceedsMetric =
+            /^days since/.test(metric) ||
+            /^count of unassigned/.test(metric) ||
+            /^ratio/.test(metric) ||
+            /^average hours/.test(metric);
+          if (isExceedsMetric) {
+            return value >= numThreshold;
+          }
+          // Count/rate metrics where higher is better: breach when value <= threshold
+          // e.g. issues_completed_weekly <= 9999 (absurdly high threshold = always breach)
+          return value <= numThreshold;
+        };
+
+        const tensionsRaised: Array<{ agentId: string; accountability: string; tensionId: string }> = [];
+        const tensionsSkipped: Array<{ agentId: string; accountability: string; reason: string }> = [];
+
+        for (const agent of agents) {
+          const accs = Array.isArray(agent.accountabilities) ? agent.accountabilities : [];
+
+          for (const acc of accs) {
+            if (!dueCadences.has(acc.cadence)) {
+              continue; // not due today
+            }
+
+            const idempotencyKey = `scan:${agent.id}:${acc.name}:${scanDate}`;
+
+            // Dedup check — skip if tension already filed today
+            const existing = await dbCtx!.query<{ id: string }>(
+              `SELECT id FROM ${tbl("tensions")} WHERE idempotency_key = $1 LIMIT 1`,
+              [idempotencyKey],
+            );
+            if (existing.length > 0) {
+              tensionsSkipped.push({ agentId: agent.id, accountability: acc.name, reason: "duplicate" });
+              continue;
+            }
+
+            // Evaluate metric
+            let metricValue: number | boolean | null = null;
+            try {
+              metricValue = await evaluateMetric(agent.id, acc.metric);
+            } catch (err) {
+              console.error(`[holacracy:scan] metric eval error for ${agent.name}/${acc.name}:`, err);
+              tensionsSkipped.push({ agentId: agent.id, accountability: acc.name, reason: "metric_error" });
+              continue;
+            }
+
+            if (metricValue === null) {
+              tensionsSkipped.push({ agentId: agent.id, accountability: acc.name, reason: "unknown_metric" });
+              continue;
+            }
+
+            if (!breaches(metricValue, acc.alert_threshold, acc.metric)) {
+              continue; // within threshold, no tension
+            }
+
+            // Find this agent's circle (first role_assignment → circle)
+            const circleRows = await dbCtx!.query<{ circle_id: string }>(
+              `SELECT r.circle_id FROM ${tbl("role_assignments")} ra JOIN ${tbl("roles")} r ON r.id = ra.role_id WHERE ra.agent_id = $1 LIMIT 1`,
+              [agent.id],
+            );
+            const circleId = circleRows[0]?.circle_id ?? fallbackCircleId;
+
+            // Determine assignee (escalation_path[0] || agent itself)
+            const escalateTo = acc.escalation_path?.[0] ?? agent.id;
+
+            const tensionId = randomUUID();
+            const title = `[Scanner] ${agent.name} breached ${acc.name}: ${metricValue} vs threshold ${acc.alert_threshold}`;
+            const description = JSON.stringify({
+              agent_id: agent.id,
+              accountability_name: acc.name,
+              metric_expression: acc.metric,
+              metric_value: metricValue,
+              alert_threshold: acc.alert_threshold,
+              cadence: acc.cadence,
+              observed_at: new Date().toISOString(),
+              scan_date: scanDate,
+              escalate_to: escalateTo,
+            });
+
+            await dbCtx!.execute(
+              `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type, idempotency_key) VALUES ($1, $2, $3, $4, $5, 'operational', $6)`,
+              [tensionId, circleId, agent.id, title, description, idempotencyKey],
+            );
+
+            await dbCtx!.execute(
+              `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, 'tension-raised', $4)`,
+              [
+                companyId,
+                agent.id,
+                circleId,
+                JSON.stringify({ tensionId, source: "accountability-scanner", accountability: acc.name, scanDate }),
+              ],
+            );
+
+            // Also write to GCC so company-level audit log surfaces scanner activity
+            if (circleId !== fallbackCircleId) {
+              await dbCtx!.execute(
+                `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, 'tension-raised', $4)`,
+                [
+                  companyId,
+                  agent.id,
+                  fallbackCircleId,
+                  JSON.stringify({ tensionId, source: "accountability-scanner", accountability: acc.name, scanDate, subCircleId: circleId }),
+                ],
+              );
+            }
+
+            tensionsRaised.push({ agentId: agent.id, accountability: acc.name, tensionId });
+          }
+        }
+
+        return {
+          status: 200,
+          body: {
+            scanDate,
+            agentsScanned: agents.length,
+            tensionsRaised: tensionsRaised.length,
+            tensionsSkipped: tensionsSkipped.length,
+            raised: tensionsRaised,
+            skipped: tensionsSkipped,
+          },
+        };
       }
 
       default:

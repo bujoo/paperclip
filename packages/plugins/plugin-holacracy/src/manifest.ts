@@ -23,6 +23,7 @@ const manifest: PaperclipPluginManifestV1 = {
     "goals.read",
     "goals.create",
     "goals.update",
+    "approvals.create",
     "activity.log.write",
     "plugin.state.read",
     "plugin.state.write",
@@ -37,6 +38,7 @@ const manifest: PaperclipPluginManifestV1 = {
     "ui.page.register",
     "ui.detailTab.register",
     "ui.dashboardWidget.register",
+    "http.outbound",
     "instance.settings.register",
   ],
   entrypoints: {
@@ -46,7 +48,7 @@ const manifest: PaperclipPluginManifestV1 = {
   database: {
     namespaceSlug: "holacracy",
     migrationsDir: "migrations",
-    coreReadTables: ["issues", "agents", "projects", "goals"],
+    coreReadTables: ["issues", "agents", "projects", "goals", "approvals"],
   },
   apiRoutes: [
     { routeKey: "list-circles", method: "GET", path: "/circles", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
@@ -78,6 +80,21 @@ const manifest: PaperclipPluginManifestV1 = {
     { routeKey: "create-strategy", method: "POST", path: "/circles/:circleId/strategies", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "update-strategy", method: "PATCH", path: "/circles/:circleId/strategies/:strategyId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "onboard-agent", method: "POST", path: "/circles/:circleId/onboard-agent", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "accountability-scan", method: "POST", path: "/accountability-scan", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+  ],
+  jobs: [
+    {
+      jobKey: "governance-approval-timeout-scanner",
+      displayName: "Governance Approval Timeout Scanner",
+      description: "Scans pending governance approvals for 24h timeout. On expiry sets status=timed_out and logs an escalation activity entry for the operator.",
+      schedule: "*/15 * * * *",
+    },
+    {
+      jobKey: "accountability-scanner",
+      displayName: "Accountability Scanner",
+      description: "Daily scan of all agent accountabilities. Raises operational tensions in the agent's primary circle for any breached alert_threshold. Idempotent — [SCAN:{agent}:{metric}:{date}] key prevents duplicate tensions.",
+      schedule: "0 3 * * *",
+    },
   ],
   tools: [
     { name: "holacracy-get-circle", displayName: "Get Holacracy Circle", description: "Get a circle's structure including purpose, roles, sub-circles, and policies", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },

@@ -19,6 +19,14 @@ export const CIRCLE_COLORS: Record<string, string> = {
   default: "#6b7280",
 };
 
+export const GOVERNANCE_APPROVERS = {
+  strategist: "aec05dae-7af7-4323-a21e-00040fbc766a",
+  productManager: "9adc6c20-de6e-4f0a-83de-ebe8a380f5d0",
+  devLead: "e1f66962-dc3c-4a8e-9875-de1a1dee2839",
+} as const;
+
+export const GOVERNANCE_APPROVAL_TIMEOUT_HOURS = 24;
+
 export const SLOT_IDS = {
   page: "holacracy-circles",
   sidebar: "holacracy-sidebar",
@@ -52,6 +60,48 @@ export const TOOL_NAMES = {
   onboardAgent: "holacracy-onboard-agent",
 } as const;
 
+/**
+ * Default domain conflict pairs (global, company_id = all-zero UUID).
+ * Each entry: domain X conflicts with each entry in `conflicts` array.
+ * Conflict is symmetric (we register both directions on seed).
+ *
+ * Source: MYA-59 strategic verdict — Sales/Growth/Doc Lead overlap incident.
+ */
+export const DEFAULT_DOMAIN_REGISTRY: Array<{
+  domain: string;
+  description: string;
+  conflicts: string[];
+}> = [
+  {
+    domain: "sales",
+    description: "Outbound revenue, deal-closing, customer acquisition",
+    conflicts: ["growth", "documentation"],
+  },
+  {
+    domain: "growth",
+    description: "Top-of-funnel marketing, virality, organic acquisition",
+    conflicts: ["sales", "documentation"],
+  },
+  {
+    domain: "documentation",
+    description: "Canonical product docs, knowledge base, ref material",
+    conflicts: ["sales", "growth"],
+  },
+  // Engineering vs. governance separation
+  {
+    domain: "engineering",
+    description: "Code authorship, system implementation",
+    conflicts: ["governance"],
+  },
+  {
+    domain: "governance",
+    description: "Constitution, role definitions, policy authoring",
+    conflicts: ["engineering"],
+  },
+];
+
+export const GLOBAL_DOMAIN_REGISTRY_COMPANY_ID = "00000000-0000-0000-0000-000000000000";
+
 export const API_ROUTES = {
   listCircles: "list-circles",
   getCircle: "get-circle",
@@ -82,4 +132,5 @@ export const API_ROUTES = {
   createStrategy: "create-strategy",
   updateStrategy: "update-strategy",
   onboardAgent: "onboard-agent",
+  accountabilityScan: "accountability-scan",
 } as const;

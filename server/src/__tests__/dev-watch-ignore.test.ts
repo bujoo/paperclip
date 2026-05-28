@@ -39,4 +39,18 @@ describe("resolveServerDevWatchIgnorePaths", () => {
     expect(ignorePaths).toContain("**/{node_modules,bower_components,vendor}/**");
     expect(ignorePaths).toContain("**/.vite-temp/**");
   });
+
+  it("excludes the in-tree packages/plugins directory so plugin dist rebuilds do not restart the server", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-dev-watch-plugins-"));
+    const repoRoot = path.join(tempRoot, "repo");
+    const serverRoot = path.join(repoRoot, "server");
+    const pluginsRoot = path.join(repoRoot, "packages", "plugins");
+    fs.mkdirSync(serverRoot, { recursive: true });
+    fs.mkdirSync(pluginsRoot, { recursive: true });
+
+    const ignorePaths = resolveServerDevWatchIgnorePaths(serverRoot);
+
+    expect(ignorePaths).toContain(pluginsRoot);
+    expect(ignorePaths).toContain(`${pluginsRoot.replaceAll(path.sep, "/")}/**`);
+  });
 });

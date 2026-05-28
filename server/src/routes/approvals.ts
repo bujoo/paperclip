@@ -133,6 +133,42 @@ export function approvalRoutes(
     res.json(issues);
   });
 
+  // MYA-79: unified decision endpoint dispatches approve|reject based on body.action.
+  // Used by holacracy governance approvals (3-of-3 accumulation in svc.resolveApproval).
+  router.post("/approvals/:id/decision", async (req, res) => {
+    const id = req.params.id as string;
+    if (!(await requireApprovalAccess(req, id))) {
+      res.status(404).json({ error: "Approval not found" });
+      return;
+    }
+    const action = (req.body?.action as string | undefined) ?? "";
+    const decisionNote = (req.body?.decisionNote as string | undefined) ?? null;
+    const decidedByUserId = req.actor.userId ?? "board";
+
+    if (action !== "approve" && action !== "reject") {
+      res.status(400).json({ error: "action must be 'approve' or 'reject'" });
+      return;
+    }
+
+    const { approval, applied } = action === "approve"
+      ? await svc.approve(id, decidedByUserId, decisionNote)
+      : await svc.reject(id, decidedByUserId, decisionNote);
+
+    if (applied) {
+      await logActivity(db, {
+        companyId: approval.companyId,
+        actorType: "user",
+        actorId: decidedByUserId,
+        action: action === "approve" ? "approval.approved" : "approval.rejected",
+        entityType: "approval",
+        entityId: approval.id,
+        details: { type: approval.type, decisionNote },
+      });
+    }
+
+    res.json(redactApprovalPayload(approval));
+  });
+
   router.post("/approvals/:id/approve", validate(resolveApprovalSchema), async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;

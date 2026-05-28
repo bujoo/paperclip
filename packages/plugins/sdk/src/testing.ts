@@ -1155,6 +1155,26 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         return updated;
       },
     },
+    approvals: {
+      async create(input) {
+        requireCapability(manifest, capabilitySet, "approvals.create");
+        const now = new Date();
+        return {
+          id: randomUUID(),
+          companyId: input.companyId,
+          type: input.type,
+          status: "pending",
+          requestedByAgentId: input.requestedByAgentId ?? null,
+          requestedByUserId: null,
+          payload: input.payload,
+          decisionNote: null,
+          decidedByUserId: null,
+          decidedAt: null,
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        };
+      },
+    },
     data: {
       register(key, handler) {
         dataHandlers.set(key, handler);

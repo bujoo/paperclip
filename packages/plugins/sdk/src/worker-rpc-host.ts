@@ -941,6 +941,18 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
         },
       },
 
+      approvals: {
+        async create(input) {
+          return callHost("approvals.create", {
+            companyId: input.companyId,
+            type: input.type,
+            payload: input.payload,
+            issueIds: input.issueIds,
+            requestedByAgentId: input.requestedByAgentId,
+          });
+        },
+      },
+
       data: {
         register(key: string, handler: (params: Record<string, unknown>) => Promise<unknown>): void {
           dataHandlers.set(key, handler);

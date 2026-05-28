@@ -1351,6 +1351,46 @@ export interface PluginGoalsClient {
 }
 
 // ---------------------------------------------------------------------------
+// Approvals (worker → host)
+// ---------------------------------------------------------------------------
+
+/**
+ * `ctx.approvals` — create board/governance approvals from a plugin worker.
+ *
+ * Use this for in-process approval creation (no HTTP roundtrip). The host
+ * delegates to the same service the public REST endpoint uses.
+ *
+ * Requires:
+ * - `approvals.create` capability
+ */
+export interface PluginApprovalsClient {
+  /**
+   * Create a new approval and optionally link it to one or more issues.
+   * Returns the created approval record (status defaults to `pending`).
+   */
+  create(input: {
+    companyId: string;
+    type: string;
+    payload: Record<string, unknown>;
+    issueIds?: string[];
+    requestedByAgentId?: string;
+  }): Promise<{
+    id: string;
+    companyId: string;
+    type: string;
+    status: string;
+    requestedByAgentId: string | null;
+    requestedByUserId: string | null;
+    payload: Record<string, unknown>;
+    decisionNote: string | null;
+    decidedByUserId: string | null;
+    decidedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+}
+
+// ---------------------------------------------------------------------------
 // Streaming (worker → UI push channel)
 // ---------------------------------------------------------------------------
 
@@ -1477,6 +1517,9 @@ export interface PluginContext {
 
   /** Read and mutate goals. Requires `goals.read` for reads; `goals.create` / `goals.update` for write ops. */
   goals: PluginGoalsClient;
+
+  /** Create approvals (board/governance). Requires `approvals.create`. */
+  approvals: PluginApprovalsClient;
 
   /** Register getData handlers for the plugin's UI components. */
   data: PluginDataClient;

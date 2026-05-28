@@ -51,6 +51,66 @@ export function approvalService(db: Db) {
     }
 
     const now = new Date();
+
+    // MYA-79 Trigger B: governance approvals require N-of-M decisions before flipping status.
+    // When type='request_board_approval' AND payload.approver_agent_ids exists, accumulate
+    // decisions in payload.decisions[] and only flip status when threshold met.
+    const payload = (existing.payload ?? {}) as Record<string, unknown>;
+    const approverIds = Array.isArray(payload.approver_agent_ids) ? (payload.approver_agent_ids as string[]) : null;
+    const isMultiApproverBoard = existing.type === "request_board_approval" && approverIds && approverIds.length > 1;
+
+    if (isMultiApproverBoard) {
+      const threshold = typeof payload.required_approvals === "number" ? payload.required_approvals : approverIds!.length;
+      const decisions = Array.isArray(payload.decisions) ? [...(payload.decisions as Array<Record<string, unknown>>)] : [];
+      decisions.push({
+        decidedByUserId,
+        action: targetStatus === "approved" ? "approve" : "reject",
+        note: decisionNote ?? null,
+        at: now.toISOString(),
+      });
+
+      const approveCount = decisions.filter((d) => d.action === "approve").length;
+      const hasReject = decisions.some((d) => d.action === "reject");
+
+      let nextStatus: string = "pending";
+      let setDecidedAt: Date | null = null;
+      if (hasReject) {
+        nextStatus = "rejected";
+        setDecidedAt = now;
+      } else if (approveCount >= threshold) {
+        nextStatus = "approved";
+        setDecidedAt = now;
+      }
+
+      const nextPayload = { ...payload, decisions };
+      const flipping = nextStatus !== "pending";
+
+      const updated = await db
+        .update(approvals)
+        .set({
+          status: nextStatus,
+          payload: nextPayload,
+          decidedByUserId: flipping ? decidedByUserId : existing.decidedByUserId,
+          decisionNote: flipping ? (decisionNote ?? null) : existing.decisionNote,
+          decidedAt: setDecidedAt ?? existing.decidedAt,
+          updatedAt: now,
+        })
+        .where(and(eq(approvals.id, id), inArray(approvals.status, resolvableStatuses)))
+        .returning()
+        .then((rows) => rows[0] ?? null);
+
+      if (!updated) {
+        const latest = await getExistingApproval(id);
+        if (latest.status === targetStatus) return { approval: latest, applied: false };
+        throw unprocessable(
+          `Only pending or revision requested approvals can be ${targetStatus === "approved" ? "approved" : "rejected"}`,
+        );
+      }
+
+      // applied=true only when status actually flipped to the target; intermediate accumulations return false
+      return { approval: updated, applied: flipping && nextStatus === targetStatus };
+    }
+
     const updated = await db
       .update(approvals)
       .set({

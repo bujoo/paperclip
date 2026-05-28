@@ -219,6 +219,11 @@ export interface HostServices {
     create(params: WorkerToHostMethods["goals.create"][0]): Promise<WorkerToHostMethods["goals.create"][1]>;
     update(params: WorkerToHostMethods["goals.update"][0]): Promise<WorkerToHostMethods["goals.update"][1]>;
   };
+
+  /** Provides `approvals.create`. */
+  approvals: {
+    create(params: WorkerToHostMethods["approvals.create"][0]): Promise<WorkerToHostMethods["approvals.create"][1]>;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -369,6 +374,7 @@ const METHOD_CAPABILITY_MAP: Record<WorkerToHostMethodName, PluginCapability | n
   "goals.get": "goals.read",
   "goals.create": "goals.create",
   "goals.update": "goals.update",
+  "approvals.create": "approvals.create",
 };
 
 // ---------------------------------------------------------------------------
@@ -638,6 +644,10 @@ export function createHostClientHandlers(
     }),
     "goals.update": gated("goals.update", async (params) => {
       return services.goals.update(params);
+    }),
+
+    "approvals.create": gated("approvals.create", async (params) => {
+      return services.approvals.create(params);
     }),
   };
 }

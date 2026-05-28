@@ -32,6 +32,7 @@ import { documentService } from "./documents.js";
 import { heartbeatService } from "./heartbeat.js";
 import { budgetService } from "./budgets.js";
 import { issueApprovalService } from "./issue-approvals.js";
+import { approvalService } from "./approvals.js";
 import { subscribeCompanyLiveEvents } from "./live-events.js";
 import { randomUUID } from "node:crypto";
 import { activityService } from "./activity.js";
@@ -479,6 +480,7 @@ export function buildHostServices(
   const costs = costService(db);
   const budgets = budgetService(db);
   const issueApprovals = issueApprovalService(db);
+  const approvals = approvalService(db);
   const assets = assetService(db);
   const scopedBus = eventBus.forPlugin(pluginKey);
 
@@ -1679,6 +1681,55 @@ export function buildHostServices(
         await ensurePluginAvailableForCompany(companyId);
         requireInCompany("Goal", await goals.getById(params.goalId), companyId);
         return (await goals.update(params.goalId, params.patch as any)) as Goal;
+      },
+    },
+
+    approvals: {
+      async create(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        const created = await approvals.create(companyId, {
+          type: params.type,
+          payload: params.payload,
+          requestedByAgentId: params.requestedByAgentId ?? null,
+          requestedByUserId: null,
+          status: "pending",
+          decisionNote: null,
+          decidedByUserId: null,
+          decidedAt: null,
+          updatedAt: new Date(),
+        });
+        const issueIds = Array.from(new Set(params.issueIds ?? []));
+        if (issueIds.length > 0) {
+          await issueApprovals.linkManyForApproval(created.id, issueIds, {
+            agentId: params.requestedByAgentId ?? null,
+            userId: null,
+          });
+        }
+        await logActivity(db, {
+          companyId,
+          actorType: params.requestedByAgentId ? "agent" : "system",
+          actorId: params.requestedByAgentId ?? `plugin:${pluginKey}`,
+          agentId: params.requestedByAgentId ?? null,
+          action: "approval.created",
+          entityType: "approval",
+          entityId: created.id,
+          details: { type: created.type, issueIds, source: `plugin:${pluginKey}` },
+        });
+        return {
+          id: created.id,
+          companyId: created.companyId,
+          type: created.type,
+          status: created.status,
+          requestedByAgentId: created.requestedByAgentId,
+          requestedByUserId: created.requestedByUserId,
+          payload: created.payload as Record<string, unknown>,
+          decisionNote: created.decisionNote,
+          decidedByUserId: created.decidedByUserId,
+          decidedAt: created.decidedAt?.toISOString() ?? null,
+          createdAt: created.createdAt.toISOString(),
+          updatedAt: created.updatedAt.toISOString(),
+        };
       },
     },
 

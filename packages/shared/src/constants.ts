@@ -592,6 +592,7 @@ export const PLUGIN_CAPABILITIES = [
   "goals.read",
   "goals.create",
   "goals.update",
+  "approvals.create",
   "activity.read",
   "costs.read",
   "issues.orchestration.read",

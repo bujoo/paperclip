@@ -988,6 +988,31 @@ export interface WorkerToHostMethods {
     },
     result: Goal,
   ];
+
+  // Approvals
+  "approvals.create": [
+    params: {
+      companyId: string;
+      type: string;
+      payload: Record<string, unknown>;
+      issueIds?: string[];
+      requestedByAgentId?: string;
+    },
+    result: {
+      id: string;
+      companyId: string;
+      type: string;
+      status: string;
+      requestedByAgentId: string | null;
+      requestedByUserId: string | null;
+      payload: Record<string, unknown>;
+      decisionNote: string | null;
+      decidedByUserId: string | null;
+      decidedAt: string | null;
+      createdAt: string;
+      updatedAt: string;
+    },
+  ];
 }
 
 /** Union of all worker→host method names. */

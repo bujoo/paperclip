@@ -176,6 +176,12 @@ function isAgentInvokable(agent: typeof agents.$inferSelect | null | undefined) 
   return Boolean(agent && !["paused", "terminated", "pending_approval"].includes(agent.status));
 }
 
+function isAgentHeartbeatEnabled(agent: typeof agents.$inferSelect) {
+  const runtimeConfig = parseObject(agent.runtimeConfig);
+  const heartbeat = parseObject(runtimeConfig.heartbeat);
+  return asBoolean(heartbeat.enabled, false);
+}
+
 function isStrandedIssueRecoveryIssue(issue: Pick<typeof issues.$inferSelect, "originKind">) {
   return isStrandedIssueRecoveryOriginKind(issue.originKind);
 }
@@ -1340,6 +1346,63 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     const existing = await findOpenStrandedIssueRecoveryIssue(input.issue.companyId, input.issue.id);
     if (existing) return existing;
 
+    // Loop guard: prevent recovery-storms.
+    // Count recent (open OR closed) recovery wrappers for this source issue. If there have been
+    // 3+ in the last 24h or 1+ in the last 6h, skip wrapper creation and emit a board tension
+    // event instead. Otherwise we get N×Opus-priced healing-of-healing-of-healing cost loops.
+    const RECOVERY_GUARD_WINDOW_MS = 6 * 60 * 60 * 1000;     // 6h cooldown
+    const RECOVERY_GUARD_MAX_24H = 3;                          // hard cap per day
+    const RECOVERY_GUARD_DAY_MS = 24 * 60 * 60 * 1000;
+    const recentWrappers = await db
+      .select({ id: issues.id, createdAt: issues.createdAt })
+      .from(issues)
+      .where(
+        and(
+          eq(issues.companyId, input.issue.companyId),
+          eq(issues.originKind, STRANDED_ISSUE_RECOVERY_ORIGIN_KIND),
+          eq(issues.originId, input.issue.id),
+        ),
+      )
+      .orderBy(desc(issues.createdAt))
+      .limit(10);
+    const nowMs = Date.now();
+    const last6h = recentWrappers.filter((r) => nowMs - new Date(r.createdAt).getTime() < RECOVERY_GUARD_WINDOW_MS);
+    const last24h = recentWrappers.filter((r) => nowMs - new Date(r.createdAt).getTime() < RECOVERY_GUARD_DAY_MS);
+    if (last6h.length >= 1 || last24h.length >= RECOVERY_GUARD_MAX_24H) {
+      logger.warn(
+        {
+          issueId: input.issue.id,
+          identifier: input.issue.identifier,
+          recent6h: last6h.length,
+          recent24h: last24h.length,
+        },
+        "stranded-detector: suppressing recovery wrapper (loop guard tripped); escalating to board",
+      );
+      try {
+        await logActivity(db, {
+          companyId: input.issue.companyId,
+          actorType: "system",
+          actorId: "system",
+          agentId: input.issue.assigneeAgentId,
+          runId: input.latestRun?.id ?? null,
+          action: "recovery.loop_guard_tripped",
+          entityType: "issue",
+          entityId: input.issue.id,
+          details: {
+            sourceIssueId: input.issue.id,
+            sourceIssueIdentifier: input.issue.identifier,
+            recoveryWrappersLast6h: last6h.length,
+            recoveryWrappersLast24h: last24h.length,
+            cap6h: 1,
+            cap24h: RECOVERY_GUARD_MAX_24H,
+          },
+        });
+      } catch (err) {
+        logger.error({ err }, "failed to log recovery.loop_guard_tripped activity");
+      }
+      return null;
+    }
+
     const ownerAgentId = await resolveStrandedIssueRecoveryOwnerAgentId(input.issue);
     if (!ownerAgentId) return null;
 
@@ -1360,6 +1423,13 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         projectId: input.issue.projectId,
         goalId: input.issue.goalId,
         assigneeAgentId: ownerAgentId,
+        // Cost guard: pin recovery wrappers to Haiku regardless of agent default model.
+        // Recovery is healing-of-healing-of-healing. Never let it run on Opus/Sonnet.
+        assigneeAdapterOverrides: {
+          adapterConfig: {
+            model: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          },
+        },
         originKind: STRANDED_ISSUE_RECOVERY_ORIGIN_KIND,
         originId: input.issue.id,
         originRunId: input.latestRun?.id ?? null,
@@ -1745,6 +1815,40 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
 
       const agent = await getAgent(agentId);
       if (!agent || agent.companyId !== issue.companyId || !isAgentInvokable(agent)) {
+        result.skipped += 1;
+        continue;
+      }
+
+      // Distinct case: agent is invokable but heartbeat is disabled — recovery wrapper won't fire.
+      // Emit a distinct activity event and skip rather than creating a wrapper that will spin uselessly.
+      if (!isAgentHeartbeatEnabled(agent)) {
+        logger.warn(
+          {
+            issueId: issue.id,
+            issueIdentifier: issue.identifier,
+            agentId,
+            agentName: agent.name,
+          },
+          "stranded-detector: skipping issue assigned to agent with heartbeat disabled; enable heartbeat on agent to unblock",
+        );
+        await logActivity(db, {
+          companyId: issue.companyId,
+          actorType: "system",
+          actorId: "system",
+          agentId,
+          runId: null,
+          action: "heartbeat.disabled_assignee_stranded",
+          entityType: "issue",
+          entityId: issue.id,
+          details: {
+            source: "recovery.reconcile_stranded_assigned_issues",
+            agentId,
+            agentName: agent.name,
+            issueIdentifier: issue.identifier,
+            message:
+              "Stranded issue skipped: assignee agent has heartbeat disabled. Enable heartbeat to unblock.",
+          },
+        });
         result.skipped += 1;
         continue;
       }

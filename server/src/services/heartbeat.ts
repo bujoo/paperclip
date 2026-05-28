@@ -32,6 +32,8 @@ import {
   issueRelations,
   issues,
   issueWorkProducts,
+  issueLabels,
+  labels,
   projects,
   projectWorkspaces,
   workspaceOperations,
@@ -4576,8 +4578,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       .then((rows) => rows[0] ?? null);
   }
 
-  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number }) {
+  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number; atStartup?: boolean }) {
     const staleThresholdMs = opts?.staleThresholdMs ?? 0;
+    const atStartup = opts?.atStartup ?? false;
     const now = new Date();
 
     // Find all runs stuck in "running" state (queued runs are legitimately waiting; resumeQueuedRuns handles them)
@@ -4638,6 +4641,39 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
       const shouldRetry = tracksLocalChild && (!!run.processPid || !!run.processGroupId) && (run.processLossRetryCount ?? 0) < 1;
       const baseMessage = buildProcessLossMessage(run, descendantOnlyCleanup ? { descendantOnly: true } : undefined);
+
+      // Startup recovery: when the server has just restarted (in-memory maps are empty),
+      // do not mark every tracked-local-child run as `process_lost`. Those runs were almost
+      // certainly killed by the parent server restart (e.g. tsx watch reload), not by the
+      // child crashing. Requeue them so the next heartbeat tick re-dispatches the work
+      // instead of leaking process_lost failures and tripping liveness escalations.
+      if (atStartup && tracksLocalChild && !processGroupAlive) {
+        const requeueMessage = `Server restarted while run ${run.id} was active; requeuing instead of marking process_lost`;
+        const requeued = await setRunStatus(run.id, "queued", {
+          startedAt: null,
+          finishedAt: null,
+          processPid: null,
+          processGroupId: null,
+          error: null,
+          errorCode: null,
+        });
+        if (requeued) {
+          await appendRunEvent(requeued, await nextRunEventSeq(requeued.id), {
+            eventType: "lifecycle",
+            stream: "system",
+            level: "warn",
+            message: requeueMessage,
+            payload: {
+              ...(run.processPid ? { previousProcessPid: run.processPid } : {}),
+              ...(run.processGroupId ? { previousProcessGroupId: run.processGroupId } : {}),
+              startupRequeue: true,
+            },
+          });
+        }
+        runningProcesses.delete(run.id);
+        reaped.push(run.id);
+        continue;
+      }
 
       let finalizedRun = await setRunStatus(run.id, "failed", {
         error: shouldRetry ? `${baseMessage}; retrying once` : baseMessage,
@@ -5177,6 +5213,128 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       modelProfile: modelProfileApplication,
       issueAdapterConfig: issueAssigneeOverrides?.adapterConfig ?? null,
     });
+
+    // ====================================================================
+    // FLAGSHIP LABEL: opt-in Opus escalation
+    // If issue carries the `flagship` label, force Opus regardless of agent default.
+    // This is the ONLY documented path to use the most-expensive tier.
+    // ====================================================================
+    if (issueContext) {
+      try {
+        const flagshipMatch = await db
+          .select({ id: labels.id })
+          .from(issueLabels)
+          .innerJoin(labels, eq(issueLabels.labelId, labels.id))
+          .where(
+            and(
+              eq(issueLabels.issueId, issueContext.id),
+              eq(issueLabels.companyId, agent.companyId),
+              eq(labels.name, "flagship"),
+            ),
+          )
+          .limit(1);
+        if (flagshipMatch.length > 0) {
+          (mergedConfig as Record<string, unknown>).model = "us.anthropic.claude-opus-4-7";
+          logger.info(
+            { issueId: issueContext.id, identifier: issueContext.identifier, agentId: agent.id, runId: run.id },
+            "flagship label detected: forcing Opus model",
+          );
+        }
+      } catch (err) {
+        logger.warn({ err }, "flagship label lookup failed; proceeding with merged model");
+      }
+    }
+
+    // ====================================================================
+    // BUDGET DEGRADATION THERMOSTAT: graceful tier downgrade as spend grows.
+    // Replaces hard-stop guillotine. Ratio-based ladder against agent monthly budget:
+    //   ratio >= 1.0 + Opus    → demote to Sonnet
+    //   ratio >= 1.5 + Sonnet  → demote to Haiku
+    //   ratio >= 2.0           → force Haiku (and Haiku stays Haiku)
+    // Skipped when flagship label was set above (Opus is mandatory there).
+    // ====================================================================
+    try {
+      const currentModel = String((mergedConfig as Record<string, unknown>).model ?? "");
+      const isFlagship =
+        currentModel.includes("opus") &&
+        issueContext &&
+        // re-check whether flagship was forced (no cheap way to track from above without state; cheap test: is Opus present and was flagship match present?)
+        false;
+      // We always evaluate, but skip degradation if explicit flagship promotion happened (Opus shouldn't be auto-demoted then)
+      const flagshipPresent = currentModel === "us.anthropic.claude-opus-4-7" && issueContext
+        ? await db
+            .select({ id: labels.id })
+            .from(issueLabels)
+            .innerJoin(labels, eq(issueLabels.labelId, labels.id))
+            .where(
+              and(
+                eq(issueLabels.issueId, issueContext.id),
+                eq(issueLabels.companyId, agent.companyId),
+                eq(labels.name, "flagship"),
+              ),
+            )
+            .limit(1)
+            .then((rows) => rows.length > 0)
+        : false;
+
+      if (!flagshipPresent && currentModel) {
+        const overview = await budgetService(db).overview(agent.companyId);
+        const agentPolicy = overview.policies.find(
+          (p) => p.scopeType === "agent" && p.scopeId === agent.id && p.metric === "billed_cents",
+        );
+        if (agentPolicy && agentPolicy.amount > 0) {
+          const ratio = agentPolicy.observedAmount / agentPolicy.amount;
+          let demotedTo: string | null = null;
+          if (currentModel.includes("opus") && ratio >= 1.0) {
+            demotedTo = "us.anthropic.claude-sonnet-4-6";
+          } else if (currentModel.includes("sonnet") && ratio >= 1.5) {
+            demotedTo = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+          } else if (ratio >= 2.0 && !currentModel.includes("haiku")) {
+            demotedTo = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+          }
+          if (demotedTo) {
+            (mergedConfig as Record<string, unknown>).model = demotedTo;
+            logger.warn(
+              {
+                agentId: agent.id,
+                agentName: agent.name,
+                runId: run.id,
+                originalModel: currentModel,
+                demotedTo,
+                ratio: ratio.toFixed(2),
+                observedCents: agentPolicy.observedAmount,
+                budgetCents: agentPolicy.amount,
+              },
+              "budget degradation: demoting model tier",
+            );
+            try {
+              await logActivity(db, {
+                companyId: agent.companyId,
+                actorType: "system",
+                actorId: "budget_service",
+                agentId: agent.id,
+                runId: run.id,
+                action: "agent.budget_degraded",
+                entityType: "agent",
+                entityId: agent.id,
+                details: {
+                  originalModel: currentModel,
+                  demotedTo,
+                  spentRatio: Number(ratio.toFixed(3)),
+                  observedCents: agentPolicy.observedAmount,
+                  budgetCents: agentPolicy.amount,
+                },
+              });
+            } catch (err) {
+              logger.error({ err }, "failed to log agent.budget_degraded activity");
+            }
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, "budget degradation evaluation failed; proceeding with merged model");
+    }
+
     const configSnapshot = buildExecutionWorkspaceConfigSnapshot(mergedConfig, selectedEnvironmentId);
     const executionRunConfig = stripWorkspaceRuntimeFromExecutionRunConfig(mergedConfig);
     const { resolvedConfig, secretKeys } = await resolveExecutionRunAdapterConfig({

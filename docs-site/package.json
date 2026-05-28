@@ -1,0 +1,17 @@
+{
+  "name": "paperclip-docs",
+  "version": "1.0.0",
+  "description": "Documentation site for My AI Company",
+  "private": true,
+  "scripts": {
+    "build": "docusaurus build",
+    "start": "docusaurus start",
+    "serve": "docusaurus serve"
+  },
+  "dependencies": {
+    "@docusaurus/core": "^3.0.0",
+    "@docusaurus/preset-classic": "^3.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}

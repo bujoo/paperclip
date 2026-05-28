@@ -123,7 +123,7 @@ function parseFiniteNumberLike(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function normalizeRuntimeConfigForNewAgent(runtimeConfig: unknown): Record<string, unknown> {
+export function normalizeRuntimeConfigForNewAgent(runtimeConfig: unknown): Record<string, unknown> {
   const normalizedRuntimeConfig = isPlainRecord(runtimeConfig) ? { ...runtimeConfig } : {};
   const heartbeat = isPlainRecord(normalizedRuntimeConfig.heartbeat)
     ? { ...normalizedRuntimeConfig.heartbeat }
@@ -131,8 +131,31 @@ function normalizeRuntimeConfigForNewAgent(runtimeConfig: unknown): Record<strin
   if (parseFiniteNumberLike(heartbeat.maxConcurrentRuns) == null) {
     heartbeat.maxConcurrentRuns = AGENT_DEFAULT_MAX_CONCURRENT_RUNS;
   }
+  // Provisioning invariant: assignable agents must have heartbeat enabled.
+  // Always set true on create — caller cannot opt out.
+  heartbeat.enabled = true;
   normalizedRuntimeConfig.heartbeat = heartbeat;
   return normalizedRuntimeConfig;
+}
+
+export function enforceHeartbeatEnabledOnUpdate(
+  existingRuntimeConfig: unknown,
+  patchRuntimeConfig: unknown,
+): Record<string, unknown> | undefined {
+  // Only intercept if caller is touching runtimeConfig
+  if (!isPlainRecord(patchRuntimeConfig)) return undefined;
+
+  const merged = { ...patchRuntimeConfig };
+  const heartbeat = isPlainRecord(merged.heartbeat) ? { ...merged.heartbeat } : null;
+  if (!heartbeat) return undefined; // not touching heartbeat — leave as-is
+
+  // Provisioning invariant: heartbeat.enabled must stay true.
+  // Auto-correct false/null/undefined back to true so wrappers always fire.
+  if (heartbeat.enabled !== true) {
+    heartbeat.enabled = true;
+    merged.heartbeat = heartbeat;
+  }
+  return merged;
 }
 
 function diffConfigSnapshot(
@@ -363,6 +386,15 @@ export function agentService(db: Db) {
     if (data.permissions !== undefined) {
       const role = (data.role ?? existing.role) as string;
       normalizedPatch.permissions = normalizeAgentPermissions(data.permissions, role);
+    }
+
+    // Provisioning invariant: heartbeat.enabled must remain true on all assignable agents.
+    // Auto-correct any attempt to set heartbeat.enabled=false so recovery wrappers always fire.
+    if (normalizedPatch.runtimeConfig !== undefined) {
+      const corrected = enforceHeartbeatEnabledOnUpdate(existing.runtimeConfig, normalizedPatch.runtimeConfig);
+      if (corrected !== undefined) {
+        normalizedPatch.runtimeConfig = corrected;
+      }
     }
 
     const shouldRecordRevision = Boolean(options?.recordRevision) && hasConfigPatchFields(normalizedPatch);

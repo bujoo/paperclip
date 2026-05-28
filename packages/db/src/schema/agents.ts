@@ -34,6 +34,14 @@ export const agents = pgTable(
     permissions: jsonb("permissions").$type<Record<string, unknown>>().notNull().default({}),
     lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    accountabilities: jsonb("accountabilities").$type<Array<{
+      name: string;
+      metric: string;
+      target: number | string | boolean;
+      alert_threshold: number | string | boolean;
+      cadence: "hourly" | "daily" | "weekly" | "monthly";
+      escalation_path?: string[];
+    }>>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

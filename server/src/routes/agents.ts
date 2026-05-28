@@ -708,9 +708,8 @@ export function agentRoutes(
     const parsedHeartbeat = asRecord(normalizedRuntimeConfig.heartbeat);
     const heartbeat = parsedHeartbeat ? { ...parsedHeartbeat } : {};
 
-    if (parseBooleanLike(heartbeat.enabled) == null) {
-      heartbeat.enabled = false;
-    }
+    // Provisioning invariant: always enable heartbeat on create — caller cannot opt out.
+    heartbeat.enabled = true;
     if (parseNumberLike(heartbeat.maxConcurrentRuns) == null) {
       heartbeat.maxConcurrentRuns = AGENT_DEFAULT_MAX_CONCURRENT_RUNS;
     }
@@ -2386,6 +2385,28 @@ export function agentRoutes(
       }
       assertNoAgentRuntimeConfigAdapterConfigMutation(req, runtimeConfig);
       requestedRuntimeConfig = runtimeConfig;
+
+      // Provisioning invariant: reject disabling heartbeat while issues are assigned.
+      const requestedHeartbeat = asRecord(runtimeConfig.heartbeat);
+      if (requestedHeartbeat && parseBooleanLike(requestedHeartbeat.enabled) === false) {
+        const assignedIssueCount = await db
+          .select({ id: issuesTable.id })
+          .from(issuesTable)
+          .where(
+            and(
+              eq(issuesTable.assigneeAgentId, id),
+              inArray(issuesTable.status, ["todo", "in_progress", "blocked"]),
+            ),
+          )
+          .limit(1)
+          .then((rows) => rows.length);
+        if (assignedIssueCount > 0) {
+          res.status(422).json({
+            error: "Cannot disable heartbeat while issues are assigned to this agent. Reassign or complete open issues first.",
+          });
+          return;
+        }
+      }
     }
     const touchesAdapterConfiguration =
       hasOwn(patchData, "adapterType") ||

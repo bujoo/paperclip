@@ -113,7 +113,7 @@ export function DocsPage() {
               {detail.project_name && <span>{detail.project_name}</span>}
               {detail.issue_identifier && (
                 <a
-                  href={`/CH/issues/${detail.issue_identifier}`}
+                  href={`/${hostCtx?.companyPrefix ?? "CH"}/issues/${detail.issue_identifier}`}
                   style={{ color: "#60afd8", textDecoration: "none" }}
                 >{detail.issue_identifier}: {detail.issue_title}</a>
               )}
@@ -134,7 +134,8 @@ export function DocsPage() {
 }
 
 export function DocsSidebar() {
-  const path = "/CH/plugins/paperclipai.plugin-docs";
+  const hostCtx = useHostContext();
+  const path = `/${hostCtx?.companyPrefix ?? "CH"}/plugins/paperclipai.plugin-docs`;
   return (
     <a href={path} onClick={(e) => { e.preventDefault(); window.history.pushState({}, "", path); window.dispatchEvent(new PopStateEvent("popstate")); }} style={{
       display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",

@@ -29,7 +29,10 @@ function normalizeAllowedHostnames(values: string[]): string[] {
 }
 
 export function resolvePrivateHostnameAllowSet(opts: { allowedHostnames: string[]; bindHost: string }): Set<string> {
-  const configuredAllow = normalizeAllowedHostnames(opts.allowedHostnames);
+  const envHostnames = process.env.PAPERCLIP_ALLOWED_HOSTNAMES
+    ? process.env.PAPERCLIP_ALLOWED_HOSTNAMES.split(",").map((h) => h.trim().toLowerCase()).filter(Boolean)
+    : [];
+  const configuredAllow = normalizeAllowedHostnames([...opts.allowedHostnames, ...envHostnames]);
   const bindHost = opts.bindHost.trim().toLowerCase();
   const allowSet = new Set<string>(configuredAllow);
 

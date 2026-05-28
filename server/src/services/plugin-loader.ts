@@ -931,8 +931,11 @@ export function pluginLoader(
     let raw: unknown;
 
     try {
-      // Dynamic import works for both .js (ESM) and .cjs (CJS) manifests
-      const mod = await import(manifestPath) as Record<string, unknown>;
+      // Dynamic import works for both .js (ESM) and .cjs (CJS) manifests.
+      // Append a cache-busting query param so Node.js does not return a
+      // stale module from its import cache when the file has been rebuilt.
+      const cacheBuster = `?t=${Date.now()}`;
+      const mod = await import(manifestPath + cacheBuster) as Record<string, unknown>;
       // The manifest may be the default export or the module itself
       raw = mod["default"] ?? mod;
     } catch (err) {

@@ -2358,4 +2358,106 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
     expect(runs).toHaveLength(1);
   });
+
+  it("re-routes original issue to alternative role filler when one exists (D2)", async () => {
+    // Seed broken agent A with an exhausted retry (retryReason: "assignment_recovery")
+    const { companyId, agentId: brokenAgentId, issueId, runId } = await seedStrandedIssueFixture({
+      status: "todo",
+      runStatus: "failed",
+      retryReason: "assignment_recovery",
+      runErrorCode: "process_lost",
+    });
+
+    // Seed a healthy agent B with the same "engineer" role
+    const alternativeAgentId = randomUUID();
+    await db.insert(agents).values({
+      id: alternativeAgentId,
+      companyId,
+      name: "AlternativeEngineer",
+      role: "engineer",
+      status: "idle",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.reconcileStrandedAssignedIssues();
+
+    // Should count as escalated (1) — re-route is tracked under escalated
+    expect(result.escalated).toBe(1);
+    expect(result.issueIds).toEqual([issueId]);
+
+    // Original issue must be reassigned to alternative agent, reset to "todo"
+    const issue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
+    expect(issue?.assigneeAgentId).toBe(alternativeAgentId);
+    expect(issue?.status).toBe("todo");
+
+    // No sibling recovery issue should exist
+    const recoveryIssues = await db
+      .select()
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "stranded_issue_recovery")));
+    expect(recoveryIssues).toHaveLength(0);
+
+    // No blocker relation on the original issue
+    const blockers = await sourceBlockerIssueIds(companyId, issueId);
+    expect(blockers).toHaveLength(0);
+
+    // A wakeup must be enqueued for the alternative agent referencing the issue
+    const wakeups = await db
+      .select()
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.agentId, alternativeAgentId));
+    const assignmentWakeup = wakeups.find((w) => {
+      const p = w.payload as Record<string, unknown> | null;
+      return p?.issueId === issueId;
+    });
+    expect(assignmentWakeup).toMatchObject({
+      companyId,
+      source: "assignment",
+      reason: "issue_assigned",
+    });
+    expect((assignmentWakeup?.payload as Record<string, unknown>)?.mutation).toBe("rerouted_to_alternative_filler");
+    expect((assignmentWakeup?.payload as Record<string, unknown>)?.previousAssigneeId).toBe(brokenAgentId);
+
+    // A comment should exist on the original issue describing the re-route
+    const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
+    expect(comments.length).toBeGreaterThanOrEqual(1);
+    const rerouteComment = comments.find((c) => c.body?.includes("re-routed"));
+    expect(rerouteComment).toBeTruthy();
+    expect(rerouteComment?.body).toContain("D2");
+    expect(rerouteComment?.body).toContain(alternativeAgentId);
+  });
+
+  it("falls back to sibling recovery issue when no alternative role filler exists (D2 fallback)", async () => {
+    // Seed broken agent A with an exhausted retry; no other engineer exists
+    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
+      status: "todo",
+      runStatus: "failed",
+      retryReason: "assignment_recovery",
+      runErrorCode: "process_lost",
+    });
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.reconcileStrandedAssignedIssues();
+
+    expect(result.escalated).toBe(1);
+    expect(result.issueIds).toEqual([issueId]);
+
+    // Original issue must be blocked (sibling path)
+    const issue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
+    expect(issue?.status).toBe("blocked");
+
+    // A sibling recovery issue must exist
+    await expectStrandedRecoveryArtifacts({
+      companyId,
+      agentId,
+      issueId,
+      runId,
+      previousStatus: "todo",
+      retryReason: "assignment_recovery",
+    });
+  });
 });

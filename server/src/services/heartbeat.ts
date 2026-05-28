@@ -4092,6 +4092,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             // owns the issue execution lock shown as the active run.
             eq(issues.assigneeAgentId, claimed.agentId),
             or(isNull(issues.executionRunId), eq(issues.executionRunId, claimed.id)),
+            // Guard: never stamp execution fields onto terminal-status issues.
+            // A queued run claiming a done/cancelled issue should be caught by
+            // evaluateQueuedRunStaleness, but this prevents a partial stamp if that
+            // path is bypassed or races with the status update.
+            notInArray(issues.status, ["done", "cancelled"]),
           ),
         );
     }
@@ -6313,13 +6318,22 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         }
         const deferredCommentIds = extractWakeCommentIds(deferredContextSeed);
         const deferredWakeReason = readNonEmptyString(deferredContextSeed.wakeReason);
-        // Only human/comment-reopen interactions should revive completed issues;
-        // system follow-ups such as retry or cleanup wakes must not reopen closed work.
+        // Only genuine human comment interactions should revive completed issues.
+        // The "user" actor type includes the board operator (actorId="local-board"),
+        // which is used by agents posting completion comments via the MCP/board path.
+        // Treating board-actor comments as reopen triggers creates an infinite loop:
+        //   agent marks done + posts comment → deferred wake promoted → issue reopened
+        //   → recovery queues new run → loop repeats.
+        // Real human users have a non-board actorId; only they should trigger reopens.
+        const isGenuineHumanCommentWake =
+          deferred.requestedByActorType === "user" &&
+          deferred.requestedByActorId !== "local-board" &&
+          deferred.requestedByActorId !== "board";
         const shouldReopenDeferredCommentWake =
           deferredCommentIds.length > 0 &&
           (issue.status === "done" || issue.status === "cancelled") &&
           (
-            deferred.requestedByActorType === "user" ||
+            isGenuineHumanCommentWake ||
             deferredWakeReason === "issue_reopened_via_comment"
           );
         let reopenedActivity: LogActivityInput | null = null;
@@ -6362,6 +6376,22 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               },
             };
           }
+        }
+
+        // Guard: do not promote deferred wakeups for terminal-status issues unless we just
+        // reopened the issue above. Promoting into a done/cancelled issue creates a queued run
+        // that is immediately stale-cancelled, which can loop if more deferred wakes are queued.
+        if (!shouldReopenDeferredCommentWake && (issue.status === "done" || issue.status === "cancelled")) {
+          await tx
+            .update(agentWakeupRequests)
+            .set({
+              status: "skipped",
+              finishedAt: new Date(),
+              error: `Deferred wake skipped: issue is in terminal status (${issue.status})`,
+              updatedAt: new Date(),
+            })
+            .where(eq(agentWakeupRequests.id, deferred.id));
+          continue;
         }
 
         const promotedReason = readNonEmptyString(deferred.reason) ?? "issue_execution_promoted";
@@ -6428,7 +6458,16 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             updatedAt: now,
           })
           // Promoted mention wakes are issue-scoped, not issue ownership transfers.
-          .where(and(eq(issues.id, issue.id), eq(issues.assigneeAgentId, deferredAgent.id)));
+          // Guard: do not stamp execution fields onto terminal-status issues even if
+          // the shouldReopenDeferredCommentWake path above updated the in-memory snapshot —
+          // the DB row is the source of truth under concurrent updates.
+          .where(
+            and(
+              eq(issues.id, issue.id),
+              eq(issues.assigneeAgentId, deferredAgent.id),
+              notInArray(issues.status, ["done", "cancelled"]),
+            ),
+          );
 
         return {
           kind: "promoted" as const,
@@ -6551,7 +6590,16 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           executionLockedAt: now,
           updatedAt: now,
         })
-        .where(eq(issues.id, issue.id));
+        .where(
+          and(
+            eq(issues.id, issue.id),
+            // Guard: never stamp execution fields onto terminal-status issues.
+            // The issueNeedsImmediateRecovery check above uses the in-transaction
+            // snapshot, but a concurrent status change to done/cancelled could race
+            // between that check and this UPDATE. Mirrors the guard in claimQueuedRun.
+            notInArray(issues.status, ["done", "cancelled"]),
+          ),
+        );
 
       return {
         kind: "queued_recovery" as const,

@@ -1511,6 +1511,127 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       .then((rows) => rows.map((row) => row.blockerIssueId));
   }
 
+  /**
+   * D2 (strategic-verdict MYA-59): find a different agent filling the same role as the
+   * current assignee that is invokable and not budget-blocked.  Returns null when no
+   * suitable alternative exists (no role match, only the broken filler is available, or
+   * every candidate is paused/budget-blocked).
+   */
+  async function resolveAlternativeRoleFiller(issue: typeof issues.$inferSelect): Promise<string | null> {
+    const currentAssigneeId = issue.assigneeAgentId;
+    if (!currentAssigneeId) return null;
+
+    const currentAssignee = await getAgent(currentAssigneeId);
+    if (!currentAssignee?.role) return null;
+
+    // Find all other agents in the same company with the same role
+    const samRoleAgents = await db
+      .select()
+      .from(agents)
+      .where(
+        and(
+          eq(agents.companyId, issue.companyId),
+          eq(agents.role, currentAssignee.role),
+          sql`${agents.id} != ${currentAssigneeId}`,
+        ),
+      )
+      .orderBy(asc(agents.createdAt));
+
+    for (const candidate of samRoleAgents) {
+      if (!isAgentInvokable(candidate)) continue;
+      const budgetBlock = await budgets.getInvocationBlock(issue.companyId, candidate.id, {
+        issueId: issue.id,
+        projectId: issue.projectId,
+      });
+      if (!budgetBlock) return candidate.id;
+    }
+
+    return null;
+  }
+
+  /**
+   * D2: Re-route the original tension directly to an alternative filler.
+   * Reassigns the issue, resets status to "todo", and enqueues an assignment wake.
+   * This avoids spawning a sibling recovery issue entirely.
+   */
+  async function rerouteOriginalIssueToAlternativeFiller(
+    issue: typeof issues.$inferSelect,
+    alternativeAgentId: string,
+    previousStatus: "todo" | "in_progress",
+    latestRun: LatestIssueRun,
+  ) {
+    const updated = await issuesSvc.update(issue.id, {
+      assigneeAgentId: alternativeAgentId,
+      status: "todo",
+    });
+    if (!updated) return null;
+
+    const prefix = await getCompanyIssuePrefix(issue.companyId);
+    const runLink = latestRun
+      ? runUiLink({ id: latestRun.id, agentId: latestRun.agentId }, prefix)
+      : "none";
+    const failureSummary = summarizeRunFailureForIssueComment(latestRun);
+
+    await issuesSvc.addComment(
+      issue.id,
+      [
+        "Paperclip re-routed this issue to an alternative role filler (D2: recovery re-route, not sibling spawn).",
+        "",
+        `- Previous status: \`${previousStatus}\``,
+        `- Previous assignee: \`${issue.assigneeAgentId ?? "none"}\``,
+        `- New assignee: \`${alternativeAgentId}\``,
+        `- Latest failed run: ${runLink}`,
+        failureSummary ? `- Failure: ${failureSummary.trim()}` : "- Failure: none recorded",
+        "",
+        "The original tension has been re-routed to a viable role filler. No sibling recovery issue was created.",
+      ].join("\n"),
+      {},
+    );
+
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: "system",
+      actorId: "system",
+      agentId: null,
+      runId: null,
+      action: "issue.updated",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        identifier: issue.identifier,
+        status: "todo",
+        previousStatus,
+        assigneeAgentId: alternativeAgentId,
+        previousAssigneeAgentId: issue.assigneeAgentId,
+        source: "recovery.reroute_to_alternative_filler",
+        latestRunId: latestRun?.id ?? null,
+        latestRunStatus: latestRun?.status ?? null,
+      },
+    });
+
+    await deps.enqueueWakeup(alternativeAgentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      payload: {
+        issueId: issue.id,
+        mutation: "rerouted_to_alternative_filler",
+        previousAssigneeId: issue.assigneeAgentId,
+      },
+      requestedByActorType: "system",
+      requestedByActorId: null,
+      contextSnapshot: {
+        issueId: issue.id,
+        taskId: issue.id,
+        wakeReason: "issue_assigned",
+        source: "issue.rerouted_to_alternative_filler",
+        previousAssigneeId: issue.assigneeAgentId,
+      },
+    });
+
+    return updated;
+  }
+
   async function escalateStrandedAssignedIssue(input: {
     issue: typeof issues.$inferSelect;
     previousStatus: "todo" | "in_progress";
@@ -1523,6 +1644,17 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         previousStatus: input.previousStatus,
         latestRun: input.latestRun,
       });
+    }
+
+    // D2: attempt re-route to alternative role filler before spawning a sibling recovery issue
+    const alternativeFillerId = await resolveAlternativeRoleFiller(input.issue);
+    if (alternativeFillerId) {
+      return rerouteOriginalIssueToAlternativeFiller(
+        input.issue,
+        alternativeFillerId,
+        input.previousStatus,
+        input.latestRun,
+      );
     }
 
     const recoveryIssue = await ensureStrandedIssueRecoveryIssue({

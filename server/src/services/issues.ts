@@ -3334,6 +3334,10 @@ export function issueService(db: Db) {
         .then((rows) => rows[0] ?? null);
 
       if (!existing) return null;
+      // Guard: never reset terminal statuses — done/cancelled issues must not be re-opened by a stale release
+      if (existing.status === "done" || existing.status === "cancelled") {
+        return existing as typeof existing & { labels: unknown[] };
+      }
       if (actorAgentId && existing.assigneeAgentId && existing.assigneeAgentId !== actorAgentId) {
         throw conflict("Only assignee can release issue");
       }

@@ -199,6 +199,25 @@ const plugin = definePlugin({
       );
     });
 
+    ctx.data.register("tensions-board", async (params) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { tensions: [], circles: [] };
+      const tensions = await ctx.db.query(
+        `SELECT t.*, c.name as circle_name, a.name as source_agent_name
+         FROM ${tbl("tensions")} t
+         JOIN ${tbl("circles")} c ON c.id = t.circle_id
+         LEFT JOIN public.agents a ON a.id = t.source_agent_id
+         WHERE c.company_id = $1
+         ORDER BY t.created_at DESC`,
+        [companyId],
+      );
+      const circles = await ctx.db.query(
+        `SELECT id, name FROM ${tbl("circles")} WHERE company_id = $1 ORDER BY name`,
+        [companyId],
+      );
+      return { tensions, circles };
+    });
+
     ctx.tools.register(
       TOOL_NAMES.getCircle,
       { displayName: "Get Holacracy Circle", description: "Get a circle's structure including purpose, roles, sub-circles, and policies", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },
@@ -583,6 +602,34 @@ ${policyList || "No policies defined yet."}
         await dbCtx!.execute(`UPDATE ${tbl("circles")} SET parent_circle_id = NULL WHERE parent_circle_id = $1`, [circleId]);
         await dbCtx!.execute(`DELETE FROM ${tbl("circles")} WHERE id = $1`, [circleId]);
         return { status: 200, body: { deleted: circleId } };
+      }
+
+      case API_ROUTES.listTensions: {
+        const circleId = input.params.circleId as string;
+        const type = input.query?.type as string | undefined;
+        const filter = type && type !== "all" ? " AND tension_type = $2" : "";
+        const params: unknown[] = filter ? [circleId, type] : [circleId];
+        const tensions = await dbCtx!.query<Tension>(
+          `SELECT t.*, a.name as agent_name FROM ${tbl("tensions")} t LEFT JOIN public.agents a ON a.id = t.source_agent_id WHERE t.circle_id = $1 AND t.status = 'open'${filter} ORDER BY t.created_at DESC`,
+          params,
+        );
+        return { status: 200, body: tensions };
+      }
+
+      case API_ROUTES.raiseTension: {
+        const circleId = input.params.circleId as string;
+        const { title, description, type: tensionType } = input.body as { title: string; description?: string; type?: string; companyId: string };
+        if (!title) return { status: 400, body: { error: "title is required" } };
+        const id = randomUUID();
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [id, circleId, null, title, description ?? null, tensionType ?? "operational"],
+        );
+        await dbCtx!.execute(
+          `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, 'tension-raised', $4)`,
+          [input.companyId, null, circleId, JSON.stringify({ tensionId: id, title, type: tensionType ?? "operational" })],
+        );
+        return { status: 201, body: { tensionId: id, title, type: tensionType ?? "operational", status: "open" } };
       }
 
       case API_ROUTES.updateTension: {

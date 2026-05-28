@@ -216,7 +216,7 @@ export function McpManagerPage() {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={handleSync} disabled={syncing} style={btnOutline}>
-            {syncing ? "Syncing..." : "Sync from Claude Code"}
+            {syncing ? "Syncing..." : "Sync from Claude / Hermes"}
           </button>
           <button onClick={openCreate} style={btnPrimary}>
             + Add Server
@@ -311,16 +311,18 @@ export function McpManagerPage() {
         ))}
       </div>
 
-      {/* Discovered from Claude Code */}
+      {/* Discovered from Claude Code / Hermes */}
       {newDiscovered.length > 0 && (
         <div style={{ padding: "0 24px 16px" }}>
           <h3 style={{ fontSize: 13, fontWeight: 600, margin: "0 0 12px", color: "var(--muted-foreground)" }}>
-            Discovered from Claude Code
+            Discovered from Claude Code / Hermes
             <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 8 }}>
-              (~/.claude/mcp.json)
+              (~/.claude/mcp.json, ~/.hermes/config.yaml)
             </span>
           </h3>
-          {newDiscovered.map(server => (
+          {newDiscovered.map(server => {
+            const isHermes = server.configPath.includes(".hermes");
+            return (
             <div key={server.name} style={{
               border: "1px dashed var(--border)", borderRadius: 8, padding: "10px 16px", marginBottom: 6,
               display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
@@ -336,6 +338,12 @@ export function McpManagerPage() {
                 <span style={{ ...badge, ...transportBadgeStyle[server.transportType] }}>
                   {server.transportType}
                 </span>
+                <span style={{ ...badge,
+                  background: isHermes ? "rgba(251,146,60,0.15)" : "rgba(107,114,128,0.15)",
+                  color: isHermes ? "rgb(251,146,60)" : "var(--muted-foreground)",
+                }}>
+                  {isHermes ? "hermes" : "claude"}
+                </span>
                 <span style={{ fontSize: 11, color: "var(--muted-foreground)", opacity: 0.6, fontFamily: "monospace" }}>
                   {server.transportUrl || `${server.command || ""} ${server.args.join(" ")}`.trim()}
                 </span>
@@ -344,7 +352,7 @@ export function McpManagerPage() {
                 Import
               </button>
             </div>
-          ))}
+          );})}
         </div>
       )}
 
@@ -451,7 +459,8 @@ export function McpManagerPage() {
 // ─── Sidebar Link ───
 
 export function McpSidebar() {
-  const path = "/CH/plugins/paperclipai.plugin-mcp-manager";
+  const { companyPrefix } = useHostContext();
+  const path = `/${companyPrefix ?? "unknown"}/plugins/paperclipai.plugin-mcp-manager`;
   return (
     <a href={path} onClick={(e) => {
       e.preventDefault();
@@ -480,6 +489,7 @@ export function AgentMcpTab() {
   const hostCtx = useHostContext();
   const companyId = hostCtx?.companyId ?? null;
   const agentId = hostCtx?.entityId ?? null;
+  const companyPrefix = hostCtx?.companyPrefix ?? null;
 
   const pluginBase = `/api/plugins/paperclipai.plugin-mcp-manager/api`;
 
@@ -608,9 +618,9 @@ export function AgentMcpTab() {
       {catalog.length === 0 && (!assignments || assignments.length === 0) && (
         <div style={{ textAlign: "center", padding: 32, color: "var(--muted-foreground)" }}>
           <p style={{ fontSize: 13 }}>No MCP servers in the company catalog.</p>
-          <a href="/CH/plugins/paperclipai.plugin-mcp-manager" onClick={(e) => {
+          <a href={`/${companyPrefix ?? "unknown"}/plugins/paperclipai.plugin-mcp-manager`} onClick={(e) => {
             e.preventDefault();
-            window.history.pushState({}, "", "/CH/plugins/paperclipai.plugin-mcp-manager");
+            window.history.pushState({}, "", `/${companyPrefix ?? "unknown"}/plugins/paperclipai.plugin-mcp-manager`);
             window.dispatchEvent(new PopStateEvent("popstate"));
           }} style={{ fontSize: 12, color: "rgb(96,165,250)", textDecoration: "none" }}>
             Set up MCP servers

@@ -1,6 +1,190 @@
 import React, { useMemo, useState, useCallback, useRef } from "react";
 import { usePluginData, useHostContext } from "@paperclipai/plugin-sdk/ui";
 
+// ── Tensions Board ────────────────────────────────────────────────────────────
+
+interface TensionRow {
+  id: string;
+  circle_id: string;
+  circle_name: string;
+  title: string;
+  description: string | null;
+  tension_type: "governance" | "operational";
+  status: "open" | "processing" | "resolved" | "rejected";
+  source_agent_name: string | null;
+  created_at: string;
+}
+
+interface CircleOption { id: string; name: string; }
+
+const COLUMN_STATUSES: Array<{ key: TensionRow["status"]; label: string }> = [
+  { key: "open", label: "Open" },
+  { key: "processing", label: "Processing" },
+  { key: "resolved", label: "Resolved" },
+];
+
+function ageDays(iso: string): number {
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+}
+
+function ageColor(days: number): string {
+  if (days < 7) return "#4ade80";
+  if (days < 14) return "#fbbf24";
+  return "#f87171";
+}
+
+function TypeBadge({ type }: { type: string }) {
+  const isGov = type === "governance";
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 9999,
+      background: isGov ? "color-mix(in oklch, #a855f7 18%, transparent)" : "color-mix(in oklch, #3b82f6 18%, transparent)",
+      color: isGov ? "#c084fc" : "#60a5fa",
+      textTransform: "uppercase" as const, letterSpacing: "0.04em",
+    }}>{type}</span>
+  );
+}
+
+function TensionCard({ tension }: { tension: TensionRow }) {
+  const days = ageDays(tension.created_at);
+  return (
+    <div style={{
+      background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8,
+      padding: "10px 12px", marginBottom: 8, cursor: "default",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)", lineHeight: 1.4, flex: 1 }}>
+          {tension.title}
+        </span>
+        <TypeBadge type={tension.tension_type} />
+      </div>
+      {tension.description && (
+        <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 4, lineHeight: 1.5,
+          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>
+          {tension.description}
+        </div>
+      )}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, gap: 8 }}>
+        <span style={{ fontSize: 11, color: "var(--muted-foreground)" }}>
+          {tension.circle_name}
+          {tension.source_agent_name ? ` · ${tension.source_agent_name}` : ""}
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: ageColor(days) }}>
+          {days === 0 ? "today" : `${days}d`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export function TensionsBoard() {
+  const hostCtx = useHostContext();
+  const companyId = hostCtx?.companyId ?? null;
+  const [typeFilter, setTypeFilter] = useState<"all" | "governance" | "operational">("all");
+  const [circleFilter, setCircleFilter] = useState<string>("all");
+
+  const { data, loading, error } = usePluginData<{ tensions: TensionRow[]; circles: CircleOption[] }>(
+    "tensions-board", { companyId: companyId ?? "" },
+  );
+
+  const filtered = useMemo(() => {
+    if (!data) return [];
+    return data.tensions.filter(t => {
+      if (typeFilter !== "all" && t.tension_type !== typeFilter) return false;
+      if (circleFilter !== "all" && t.circle_id !== circleFilter) return false;
+      return true;
+    });
+  }, [data, typeFilter, circleFilter]);
+
+  const byStatus = useMemo(() => {
+    const map: Record<string, TensionRow[]> = { open: [], processing: [], resolved: [] };
+    for (const t of filtered) {
+      const key = t.status === "rejected" ? "resolved" : t.status;
+      if (key in map) map[key].push(t);
+    }
+    return map;
+  }, [filtered]);
+
+  if (!companyId) return <div style={{ padding: 32, color: "var(--muted-foreground)" }}>Select a company.</div>;
+  if (loading) return <div style={{ padding: 32, color: "var(--muted-foreground)" }}>Loading tensions...</div>;
+  if (error) return <div style={{ padding: 32, color: "#f87171" }}>Failed to load tensions: {String(error)}</div>;
+  if (!data) return null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" as const, height: "100%", minHeight: 0 }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+        <span style={{ fontSize: 16, fontWeight: 700, color: "var(--foreground)" }}>Tensions Board</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          {/* Type filter */}
+          <select
+            value={typeFilter}
+            onChange={e => setTypeFilter(e.target.value as any)}
+            style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", cursor: "pointer" }}
+          >
+            <option value="all">All types</option>
+            <option value="governance">Governance</option>
+            <option value="operational">Operational</option>
+          </select>
+          {/* Circle filter */}
+          <select
+            value={circleFilter}
+            onChange={e => setCircleFilter(e.target.value)}
+            style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", cursor: "pointer" }}
+          >
+            <option value="all">All circles</option>
+            {data.circles.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+      </div>
+      {/* Kanban columns */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, padding: 16, flex: 1, minHeight: 0, overflowY: "auto" }}>
+        {COLUMN_STATUSES.map(col => (
+          <div key={col.key} style={{ display: "flex", flexDirection: "column" as const, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)" }}>{col.label}</span>
+              <span style={{ fontSize: 11, fontWeight: 600, padding: "1px 7px", borderRadius: 9999, background: "var(--muted)", color: "var(--muted-foreground)" }}>
+                {byStatus[col.key]?.length ?? 0}
+              </span>
+            </div>
+            <div style={{ flex: 1 }}>
+              {(byStatus[col.key] ?? []).length === 0
+                ? <div style={{ fontSize: 12, color: "var(--muted-foreground)", fontStyle: "italic", padding: "8px 0" }}>No tensions</div>
+                : (byStatus[col.key] ?? []).map(t => <TensionCard key={t.id} tension={t} />)
+              }
+            </div>
+          </div>
+        ))}
+      </div>
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 16, padding: "8px 16px", borderTop: "1px solid var(--border)", fontSize: 11, color: "var(--muted-foreground)", flexShrink: 0 }}>
+        <span style={{ color: "#4ade80" }}>● &lt;7d</span>
+        <span style={{ color: "#fbbf24" }}>● 7–14d</span>
+        <span style={{ color: "#f87171" }}>● &gt;14d</span>
+        <span style={{ marginLeft: "auto" }}>{filtered.length} tensions total</span>
+      </div>
+    </div>
+  );
+}
+
+export function TensionsBoardSidebar() {
+  const { companyPrefix } = useHostContext();
+  const path = `/${companyPrefix ?? "unknown"}/tensions`;
+  return (
+    <a href={path} onClick={(e) => { e.preventDefault(); window.history.pushState({}, "", path); window.dispatchEvent(new PopStateEvent("popstate")); }} style={{
+      display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
+      fontSize: 13, fontWeight: 500, color: "var(--foreground)", opacity: 0.8,
+      textDecoration: "none", borderRadius: 4,
+    }}>
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+        <rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="11" rx="1"/><rect x="14" y="17" width="7" height="4" rx="1"/>
+      </svg>
+      <span>Tensions</span>
+    </a>
+  );
+}
+
 interface CircleWithRoles {
   id: string;
   name: string;
@@ -240,6 +424,7 @@ function computeLayout(rootNode: TreeNode): { circles: LCircle[]; roles: LRole[]
 export function CircleNavigator() {
   const hostCtx = useHostContext();
   const companyId = hostCtx?.companyId ?? null;
+  const companyPrefix = hostCtx?.companyPrefix ?? null;
   const containerRef = useRef<HTMLDivElement>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [tooltip, setTooltip] = useState<{ role: CircleWithRoles["roles"][0]; x: number; y: number } | null>(null);
@@ -569,7 +754,7 @@ export function CircleNavigator() {
                   <div style={{ minWidth: 0 }}>
                     {role.agent_name ? (
                       <a
-                        href={`/CH/agents/${role.agent_name.toLowerCase().replace(/&/g, "").replace(/\s+/g, "-")}`}
+                        href={`/${companyPrefix ?? "unknown"}/agents/${role.agent_name.toLowerCase().replace(/&/g, "").replace(/\s+/g, "-")}`}
                         style={{ fontSize: 13, color: LINK_BLUE, fontWeight: 500, textDecoration: "none" }}
                       >{role.agent_name}</a>
                     ) : (
@@ -776,7 +961,8 @@ export function CircleNavigator() {
 }
 
 export function HolacracySidebar() {
-  const path = "/CH/circles";
+  const { companyPrefix } = useHostContext();
+  const path = `/${companyPrefix ?? "unknown"}/circles`;
   return (
     <a href={path} onClick={(e) => { e.preventDefault(); window.history.pushState({}, "", path); window.dispatchEvent(new PopStateEvent("popstate")); }} style={{
       display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
@@ -791,7 +977,6 @@ export function HolacracySidebar() {
     </a>
   );
 }
-
 export function AgentRoleTab() {
   const hostCtx = useHostContext();
   const agentId = hostCtx?.entityId ?? null;

@@ -5,6 +5,7 @@ import path from "node:path";
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { API_ROUTES, TOOL_NAMES } from "./constants.js";
+import yaml from "js-yaml";
 
 let db: PluginContext["db"];
 
@@ -67,6 +68,61 @@ function discoverClaudeMcpServers(): DiscoveredServer[] {
   return discovered;
 }
 
+function discoverHermesMcpServers(): DiscoveredServer[] {
+  const discovered: DiscoveredServer[] = [];
+  const configPath = path.join(os.homedir(), ".hermes", "config.yaml");
+  if (!fs.existsSync(configPath)) return discovered;
+
+  try {
+    const parsed = yaml.load(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    const mcpServers = parsed?.mcp_servers;
+    if (!mcpServers || typeof mcpServers !== "object") return discovered;
+
+    for (const [name, config] of Object.entries(mcpServers as Record<string, unknown>)) {
+      const cfg = config as Record<string, unknown>;
+      const hasUrl = typeof cfg.url === "string";
+      const hasCommand = typeof cfg.command === "string";
+      const typeField = (cfg.type as string) || "";
+
+      let transportType: "stdio" | "http" | "sse" = "stdio";
+      if (typeField === "sse") transportType = "sse";
+      else if (typeField === "http" || hasUrl) transportType = "http";
+
+      let args: string[] = [];
+      if (Array.isArray(cfg.args)) args = cfg.args as string[];
+
+      const env: Record<string, string> = {};
+      if (cfg.env && typeof cfg.env === "object" && !Array.isArray(cfg.env)) {
+        for (const [k, v] of Object.entries(cfg.env as Record<string, unknown>)) {
+          env[k] = String(v);
+        }
+      }
+
+      discovered.push({
+        name,
+        transportType,
+        command: hasCommand ? (cfg.command as string) : null,
+        args,
+        env,
+        transportUrl: hasUrl ? (cfg.url as string) : null,
+        configPath,
+      });
+    }
+  } catch {
+    // ignore parse errors
+  }
+
+  return discovered;
+}
+
+function discoverAllMcpServers(): DiscoveredServer[] {
+  const claude = discoverClaudeMcpServers();
+  const hermes = discoverHermesMcpServers();
+  // merge; claude takes precedence on name collisions
+  const seen = new Set(claude.map(s => s.name));
+  return [...claude, ...hermes.filter(s => !seen.has(s.name))];
+}
+
 const plugin = definePlugin({
   async setup(ctx) {
     db = ctx.db;
@@ -91,7 +147,7 @@ const plugin = definePlugin({
     });
 
     ctx.data.register("discovered-servers", async () => {
-      return discoverClaudeMcpServers();
+      return discoverAllMcpServers();
     });
 
     ctx.tools.register(
@@ -213,8 +269,8 @@ const plugin = definePlugin({
         }
 
         case API_ROUTES.syncServers: {
-          const { companyId } = body;
-          const discovered = discoverClaudeMcpServers();
+          const { companyId } = body as { companyId: string };
+          const discovered = discoverAllMcpServers();
           let imported = 0;
 
           for (const server of discovered) {

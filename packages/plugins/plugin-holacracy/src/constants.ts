@@ -62,6 +62,8 @@ export const API_ROUTES = {
   updateCircle: "update-circle",
   updateRoleAssignment: "update-role-assignment",
   deleteCircle: "delete-circle",
+  listTensions: "list-tensions",
+  raiseTension: "raise-tension",
   updateTension: "update-tension",
   getAuditLog: "get-audit-log",
   recordDecision: "record-decision",

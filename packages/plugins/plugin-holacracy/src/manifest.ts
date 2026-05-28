@@ -58,6 +58,8 @@ const manifest: PaperclipPluginManifestV1 = {
     { routeKey: "delete-circle", method: "DELETE", path: "/circles/:circleId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
     { routeKey: "update-role", method: "PATCH", path: "/circles/:circleId/roles/:roleId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "update-circle", method: "PATCH", path: "/circles/:circleId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "list-tensions", method: "GET", path: "/circles/:circleId/tensions", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    { routeKey: "raise-tension", method: "POST", path: "/circles/:circleId/tensions", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "update-tension", method: "PATCH", path: "/tensions/:tensionId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "get-audit-log", method: "GET", path: "/circles/:circleId/audit-log", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
     { routeKey: "record-decision", method: "POST", path: "/circles/:circleId/decide", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
@@ -93,8 +95,10 @@ const manifest: PaperclipPluginManifestV1 = {
   ],
   ui: {
     slots: [
-      { type: "page", id: "holacracy-circles", displayName: "Circles", exportName: "CircleNavigator" },
+      { type: "page", id: "holacracy-circles", displayName: "Circles", exportName: "CircleNavigator", routePath: "circles" },
       { type: "sidebar", id: "holacracy-sidebar", displayName: "Circles", exportName: "HolacracySidebar" },
+      { type: "page", id: "holacracy-tensions-board", displayName: "Tensions Board", exportName: "TensionsBoard", routePath: "tensions" },
+      { type: "sidebar", id: "holacracy-tensions-board-sidebar", displayName: "Tensions Board", exportName: "TensionsBoardSidebar" },
       { type: "detailTab", id: "holacracy-agent-role", displayName: "Role", exportName: "AgentRoleTab", entityTypes: ["agent"] },
       { type: "detailTab", id: "holacracy-circle-detail", displayName: "Circle", exportName: "CircleDetailTab", entityTypes: ["project"] },
       { type: "dashboardWidget", id: "holacracy-health", displayName: "Circle Health", exportName: "CircleHealthWidget" },

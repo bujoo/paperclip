@@ -605,5 +605,323 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         });
       },
     ),
+
+    // ── Holacracy plugin tools ────────────────────────────────────────────────
+
+    makeTool(
+      "holacracyListCircles",
+      "List all Holacracy circles in the company",
+      z.object({ companyId: companyIdOptional }),
+      async ({ companyId }) =>
+        client.requestJson(
+          "GET",
+          `/plugins/paperclipai.plugin-holacracy/api/circles?companyId=${encodeURIComponent(client.resolveCompanyId(companyId))}`,
+        ),
+    ),
+
+    makeTool(
+      "holacracyGetCircle",
+      "Get details of a single Holacracy circle including its roles and accountabilities",
+      z.object({ circleId: z.string().min(1), companyId: companyIdOptional }),
+      async ({ circleId, companyId }) =>
+        client.requestJson(
+          "GET",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}?companyId=${encodeURIComponent(client.resolveCompanyId(companyId))}`,
+        ),
+    ),
+
+    makeTool(
+      "holacracyCreateCircle",
+      "Create a new Holacracy sub-circle. parentCircleId is required for all circles except the General Company Circle.",
+      z.object({
+        companyId: companyIdOptional,
+        name: z.string().min(1),
+        purpose: z.string().min(1),
+        parentCircleId: z.string().optional().nullable(),
+      }),
+      async ({ companyId, ...body }) =>
+        client.requestJson("POST", `/plugins/paperclipai.plugin-holacracy/api/circles`, {
+          body: { companyId: client.resolveCompanyId(companyId), ...body },
+        }),
+    ),
+
+    makeTool(
+      "holacracyUpdateCircle",
+      "Update the name, purpose, or domain of a Holacracy circle",
+      z.object({
+        circleId: z.string().min(1),
+        companyId: companyIdOptional,
+        name: z.string().optional(),
+        purpose: z.string().optional(),
+        domain: z.string().optional().nullable(),
+      }),
+      async ({ circleId, companyId, ...body }) =>
+        client.requestJson(
+          "PATCH",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}`,
+          { body: { companyId: client.resolveCompanyId(companyId), ...body } },
+        ),
+    ),
+
+    makeTool(
+      "holacracyDeleteCircle",
+      "Delete a Holacracy circle (cannot delete the General Company Circle)",
+      z.object({ circleId: z.string().min(1), companyId: companyIdOptional }),
+      async ({ circleId, companyId }) =>
+        client.requestJson(
+          "DELETE",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}?companyId=${encodeURIComponent(client.resolveCompanyId(companyId))}`,
+        ),
+    ),
+
+    makeTool(
+      "holacracyListRoles",
+      "List roles assigned within a Holacracy circle (includes Circle Lead, Rep, Facilitator, Secretary, and custom roles)",
+      z.object({ circleId: z.string().min(1), companyId: companyIdOptional }),
+      async ({ circleId, companyId }) =>
+        client.requestJson(
+          "GET",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/roles?companyId=${encodeURIComponent(client.resolveCompanyId(companyId))}`,
+        ),
+    ),
+
+    makeTool(
+      "holacracyAssignRole",
+      "Assign an agent to a role in a circle. roleType: circle_lead | facilitator | secretary | circle_rep | custom. For custom also provide roleName + purpose. focusPercentage (0-100) = energy allocation.",
+      z.object({
+        circleId: z.string().min(1),
+        companyId: companyIdOptional,
+        agentId: z.string().uuid(),
+        roleType: z.enum(["circle_lead", "facilitator", "secretary", "circle_rep", "custom"]),
+        roleName: z.string().optional(),
+        purpose: z.string().optional(),
+        domain: z.string().optional().nullable(),
+        accountabilities: z.array(z.string()).optional(),
+        focusPercentage: z.number().int().min(0).max(100).optional(),
+      }),
+      async ({ circleId, companyId, ...body }) =>
+        client.requestJson(
+          "POST",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/roles`,
+          { body: { companyId: client.resolveCompanyId(companyId), ...body } },
+        ),
+    ),
+
+    makeTool(
+      "holacracyUpdateRoleAssignment",
+      "Update an existing role assignment (focusPercentage, accountabilities, domain, or reassign to different agent)",
+      z.object({
+        circleId: z.string().min(1),
+        roleId: z.string().min(1),
+        companyId: companyIdOptional,
+        agentId: z.string().uuid().optional(),
+        roleName: z.string().optional(),
+        purpose: z.string().optional(),
+        domain: z.string().optional().nullable(),
+        accountabilities: z.array(z.string()).optional(),
+        focusPercentage: z.number().int().min(0).max(100).optional(),
+      }),
+      async ({ circleId, roleId, companyId, ...body }) =>
+        client.requestJson(
+          "PATCH",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/roles/${encodeURIComponent(roleId)}/assign`,
+          { body: { companyId: client.resolveCompanyId(companyId), ...body } },
+        ),
+    ),
+
+    makeTool(
+      "holacracyUpdateRole",
+      "Update the definition of a role (name, purpose, domain, accountabilities) — governance change",
+      z.object({
+        circleId: z.string().min(1),
+        roleId: z.string().min(1),
+        companyId: companyIdOptional,
+        roleName: z.string().optional(),
+        purpose: z.string().optional(),
+        domain: z.string().optional().nullable(),
+        accountabilities: z.array(z.string()).optional(),
+      }),
+      async ({ circleId, roleId, companyId, ...body }) =>
+        client.requestJson(
+          "PATCH",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/roles/${encodeURIComponent(roleId)}`,
+          { body: { companyId: client.resolveCompanyId(companyId), ...body } },
+        ),
+    ),
+
+    makeTool(
+      "holacracyListTensions",
+      "List open tensions in a circle, optionally filtered by type (operational | governance | all)",
+      z.object({
+        circleId: z.string().min(1),
+        companyId: companyIdOptional,
+        type: z.enum(["operational", "governance", "all"]).optional(),
+      }),
+      async ({ circleId, companyId, type }) => {
+        const params = new URLSearchParams({ companyId: client.resolveCompanyId(companyId) });
+        if (type) params.set("type", type);
+        return client.requestJson(
+          "GET",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/tensions?${params}`,
+        );
+      },
+    ),
+
+    makeTool(
+      "holacracyRaiseTension",
+      "Raise a tension in a circle for processing in the next Governance or Tactical meeting",
+      z.object({
+        circleId: z.string().min(1),
+        companyId: companyIdOptional,
+        title: z.string().min(1),
+        description: z.string().min(1),
+        type: z.enum(["operational", "governance"]),
+      }),
+      async ({ circleId, companyId, ...body }) =>
+        client.requestJson(
+          "POST",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/tensions`,
+          { body: { companyId: client.resolveCompanyId(companyId), ...body } },
+        ),
+    ),
+
+    makeTool(
+      "holacracyUpdateTension",
+      "Update or resolve a tension (mark as resolved, update description)",
+      z.object({
+        tensionId: z.string().min(1),
+        companyId: companyIdOptional,
+        title: z.string().optional(),
+        description: z.string().optional(),
+        status: z.enum(["open", "resolved"]).optional(),
+      }),
+      async ({ tensionId, companyId, ...body }) =>
+        client.requestJson(
+          "PATCH",
+          `/plugins/paperclipai.plugin-holacracy/api/tensions/${encodeURIComponent(tensionId)}`,
+          { body: { companyId: client.resolveCompanyId(companyId), ...body } },
+        ),
+    ),
+
+    makeTool(
+      "holacracyForwardTension",
+      "Forward a tension from a sub-circle to the parent circle (Circle Rep role only)",
+      z.object({
+        circleId: z.string().min(1),
+        companyId: companyIdOptional,
+        tensionId: z.string().min(1),
+        context: z.string().min(1),
+      }),
+      async ({ circleId, companyId, ...body }) =>
+        client.requestJson(
+          "POST",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/forward-tension`,
+          { body: { companyId: client.resolveCompanyId(companyId), ...body } },
+        ),
+    ),
+
+    makeTool(
+      "holacracyRecordDecision",
+      "Record a governance decision in a circle (e.g. from a Governance Meeting outcome)",
+      z.object({
+        circleId: z.string().min(1),
+        companyId: companyIdOptional,
+        decision: z.string().min(1),
+        rationale: z.string().optional(),
+        relatedTensionId: z.string().optional().nullable(),
+      }),
+      async ({ circleId, companyId, ...body }) =>
+        client.requestJson(
+          "POST",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/decide`,
+          { body: { companyId: client.resolveCompanyId(companyId), ...body } },
+        ),
+    ),
+
+    makeTool(
+      "holacracyListPolicies",
+      "List governance policies in a circle",
+      z.object({ circleId: z.string().min(1), companyId: companyIdOptional }),
+      async ({ circleId, companyId }) =>
+        client.requestJson(
+          "GET",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/policies?companyId=${encodeURIComponent(client.resolveCompanyId(companyId))}`,
+        ),
+    ),
+
+    makeTool(
+      "holacracyCreatePolicy",
+      "Create a governance policy in a circle (a rule governing role behavior or domain access)",
+      z.object({
+        circleId: z.string().min(1),
+        companyId: companyIdOptional,
+        title: z.string().min(1),
+        description: z.string().min(1),
+        appliesToRole: z.string().optional().nullable(),
+      }),
+      async ({ circleId, companyId, ...body }) =>
+        client.requestJson(
+          "POST",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/policies`,
+          { body: { companyId: client.resolveCompanyId(companyId), ...body } },
+        ),
+    ),
+
+    makeTool(
+      "holacracyListStrategies",
+      "List strategies defined for a circle",
+      z.object({ circleId: z.string().min(1), companyId: companyIdOptional }),
+      async ({ circleId, companyId }) =>
+        client.requestJson(
+          "GET",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/strategies?companyId=${encodeURIComponent(client.resolveCompanyId(companyId))}`,
+        ),
+    ),
+
+    makeTool(
+      "holacracyCreateStrategy",
+      "Create a strategy heuristic for a circle — a rule-of-thumb guiding role prioritization (not a goal)",
+      z.object({
+        circleId: z.string().min(1),
+        companyId: companyIdOptional,
+        title: z.string().min(1),
+        description: z.string().min(1),
+      }),
+      async ({ circleId, companyId, ...body }) =>
+        client.requestJson(
+          "POST",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/strategies`,
+          { body: { companyId: client.resolveCompanyId(companyId), ...body } },
+        ),
+    ),
+
+    makeTool(
+      "holacracyGetAuditLog",
+      "Get the governance audit log for a circle (decisions, role changes, policy changes)",
+      z.object({ circleId: z.string().min(1), companyId: companyIdOptional }),
+      async ({ circleId, companyId }) =>
+        client.requestJson(
+          "GET",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/audit-log?companyId=${encodeURIComponent(client.resolveCompanyId(companyId))}`,
+        ),
+    ),
+
+    makeTool(
+      "holacracyOnboardAgent",
+      "Onboard an agent into a circle, creating an initial role assignment and briefing",
+      z.object({
+        circleId: z.string().min(1),
+        companyId: companyIdOptional,
+        agentId: z.string().uuid(),
+        roleType: z.enum(["circle_lead", "facilitator", "secretary", "circle_rep", "custom"]),
+        roleName: z.string().optional(),
+      }),
+      async ({ circleId, companyId, ...body }) =>
+        client.requestJson(
+          "POST",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/onboard-agent`,
+          { body: { companyId: client.resolveCompanyId(companyId), ...body } },
+        ),
+    ),
   ];
 }

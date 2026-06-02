@@ -539,6 +539,19 @@ const hermesLocalAdapter: ServerAdapterModule = {
       "Output: 1-2 paragraphs of substantive reasoning. Do NOT synthesise others' views — that's not your job in IDM.",
     ].join("\n");
 
+    // F7 — Proposer role variant. The proposer (whoever raised the motivating
+    // tension) has different obligations from any other participant: they own
+    // the proposal, defend its rationale, and re-draft when valid objections
+    // land. This is selected via runtimeConfig.isProposer (set by heartbeat
+    // when the agent is the discussion's initiated_by_agent_id), and takes
+    // precedence over their structural role in the discussion.
+    const proposerBlock = [
+      "You are the PROPOSER of this discussion (you raised the motivating tension). Robertson: the proposer owns the proposal, defends its rationale, and re-drafts on VALID objections — but never on speculation or preference.",
+      "Your turn now depends on the phase. In `proposal`: state the change in 1-2 sentences, cite the tension. In `clarifying`: answer questions; do NOT defend. In `reactions`: listen — you don't speak. In `amend`: amend ONLY if a substantive concern was raised; otherwise hold. In `objections`: respond to each objection's harm-to-the-circle test; if invalid (per Robertson's 3 criteria) say so. In `integration`: re-draft to integrate the valid objection.",
+      "Werkbaar over SMART — the bar is 'workable as an experiment', not perfection. Do NOT chase consensus.",
+      "Output: 1-2 paragraphs targeted at the current phase.",
+    ].join("\n");
+
     const facilitatorBlock = [
       "You are the Facilitator (Robertson: 'scheidsrechter' / process referee). Your job in this round is PROCESS, not content.",
       "1. Confirm the discussion is in the right phase (reactions vs. amendment vs. objections). Name the phase explicitly.",
@@ -573,10 +586,17 @@ const hermesLocalAdapter: ServerAdapterModule = {
       "Output: one line stating 'OBSERVING — not my turn' followed by at most one optional clarifying question.",
     ].join("\n");
 
+    // F7 — proposer flag takes precedence over the structural role variant
+    // because the proposer's obligations are phase-shaped, not role-shaped.
+    const isProposer =
+      isDiscussionTurn && runtimeConfigForHermes.isProposer === true;
+
     let roleJobBlock = genericJobBlock;
     if (isDiscussionTurn) {
       if (!isCurrentSpeaker && !isSummaryTurn) {
         roleJobBlock = observerBlock;
+      } else if (isProposer) {
+        roleJobBlock = proposerBlock;
       } else if (discussionRole === "secretary" && isSummaryTurn) {
         roleJobBlock = secretarySummaryBlock;
       } else if (discussionRole === "secretary") {

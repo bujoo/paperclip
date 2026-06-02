@@ -178,10 +178,15 @@ export async function execute(
         payload: taskPayload,
         timeoutMs: target.timeoutMs,
         userProperties: {
+          // E5 — EMQX A2A-over-MQTT spec user properties.
+          // https://github.com/emqx-ai/a2a-over-mqtt — `a2a-task-id` is the
+          // requester-generated Task.id; `a2a-task-context-id` is the multi-
+          // turn context. Both are kept literal so external A2A clients
+          // (python-a2a, @a2aproject/a2a) can read them directly.
           "a2a-task-id": taskId,
           "a2a-run-id": ctx.runId,
           "a2a-content": "task",
-          ...(contextId ? { "a2a-context-id": contextId } : {}),
+          ...(contextId ? { "a2a-task-context-id": contextId, "a2a-context-id": contextId } : {}),
         },
         contentType: "application/json",
       });

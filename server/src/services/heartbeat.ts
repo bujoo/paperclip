@@ -5845,6 +5845,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                     speaker_order: unknown;
                     current_speaker_idx: number | null;
                     phase: string | null;
+                    initiated_by_agent_id: string | null;
                     decision_owner_agent_id: string | null;
                     consulted_agent_ids: unknown;
                     ratifier_agent_id: string | null;

@@ -2216,7 +2216,7 @@ async function runReplyOnTask(
       userProperties: {
         ...pending.userProperties,
         "a2a-status-source": "agent-tool",
-        ...(issue.contextId ? { "a2a-context-id": issue.contextId } : {}),
+        ...(issue.contextId ? { "a2a-task-context-id": issue.contextId, "a2a-context-id": issue.contextId } : {}),
       },
     });
   } catch (err) {
@@ -5025,6 +5025,77 @@ async function runStewardHealer(): Promise<StewardCounters> {
     }
   } catch (err) {
     console.warn("[holacracy] steward: stuck-discussion scan failed:", err instanceof Error ? err.message : String(err));
+  }
+
+  // ── 4b. F8 — Per-phase IDM deadline scanner ────────────────────────────
+  // The IDM 6-phase pipeline (F3) advances only when every outstanding turn
+  // issue for the current phase is `done` or `cancelled`. If one or more
+  // agents fail to take their turn within the per-phase deadline, the
+  // discussion stalls forever. This scanner cancels overdue turn issues so
+  // F3 can advance on the next tick — preventing a single stalled agent
+  // from blocking the whole circle.
+  try {
+    const PHASE_DEADLINES_HOURS: Record<string, number> = {
+      proposal: 4,
+      clarifying_questions: 2,
+      reactions: 4,
+      amend: 2,
+      objections: 4,
+      integration: 8,
+    };
+    const overdue = await dbCtx.query<{
+      id: string;
+      company_id: string;
+      circle_id: string | null;
+      phase: string;
+      topic: string;
+      hours_in_phase: number;
+    }>(
+      `SELECT d.id, d.company_id, d.circle_id, d.phase, d.topic,
+              EXTRACT(EPOCH FROM (NOW() - d.updated_at)) / 3600.0 AS hours_in_phase
+         FROM public.circle_discussions d
+        WHERE d.status = 'open'
+          AND d.phase = ANY($1::text[])`,
+      [Object.keys(PHASE_DEADLINES_HOURS)],
+    );
+    counters.checked += overdue.length;
+    for (const d of overdue) {
+      const deadline = PHASE_DEADLINES_HOURS[d.phase];
+      if (deadline == null || Number(d.hours_in_phase) < deadline) continue;
+      const marker = `[STEWARD:phase-deadline:${d.id}:${d.phase}:${today}]`;
+      if (await stewardAlreadyActed(marker)) continue;
+      // Cancel the still-open turn issues for the CURRENT phase so the F3
+      // advancer's countPhaseTurns sees stats.finished == stats.total on its
+      // next tick. We leave the discussion's phase alone — F3 will advance it.
+      const phaseFingerprint = `idm-${d.phase}`;
+      await dbCtx.execute(
+        `UPDATE public.issues
+            SET status = 'cancelled', updated_at = NOW()
+          WHERE origin_kind = 'discussion:turn'
+            AND origin_id = $1
+            AND origin_fingerprint = $2
+            AND status IN ('backlog', 'todo', 'in_progress')`,
+        [d.id, phaseFingerprint],
+      );
+      counters.healed += 1;
+      if (activityCtx) {
+        await activityCtx.log({
+          companyId: d.company_id,
+          message: `${marker} Phase-deadline scanner cancelled overdue ${d.phase} turns on discussion ${d.id.slice(0, 8)} (${d.hours_in_phase.toFixed(1)}h > ${deadline}h limit); F3 will advance next tick.`,
+          entityType: "discussion",
+          entityId: marker,
+          metadata: {
+            discussionId: d.id,
+            phase: d.phase,
+            hoursInPhase: Number(d.hours_in_phase),
+            deadlineHours: deadline,
+            kind: "phase-deadline-cancellation",
+          },
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("[holacracy] steward: phase-deadline scan failed:", err instanceof Error ? err.message : String(err));
   }
 
   // ── 5. Stale awaiting_commitments ──────────────────────────────────────

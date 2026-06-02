@@ -385,7 +385,9 @@ async function publishA2AReply(
       userProperties: {
         ...pending.userProperties,
         "a2a-status-source": "agent",
-        ...(contextId ? { "a2a-context-id": contextId } : {}),
+        // E5 — EMQX A2A spec: `a2a-task-context-id` for multi-turn; keep
+        // legacy `a2a-context-id` alongside for backward-compat.
+        ...(contextId ? { "a2a-task-context-id": contextId, "a2a-context-id": contextId } : {}),
       },
       contentType: "application/json",
     });

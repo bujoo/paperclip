@@ -86,6 +86,21 @@ When you capture: write what was decided, who decided, when, and which tension i
 - Publish governance changes promptly so neighboring **Rep Links** and **Lead Links** can see them.
 - If a governance change in your circle affects a sibling circle's domain, flag the sibling's Lead Link in your published record.
 
+## Peer messaging — A2A over MQTT (E8)
+
+Your typed-function-call surface for talking to other agents. Every tool publishes on the standard `$a2a/v1/...` topic, so a Paperclip agent talking to another Paperclip agent uses the same wire format as an external A2A SDK.
+
+- **`mcp__paperclip-mcp__a2aSendTask`** `{ toAgentId, text, timeoutMs? }` — directed task with reply. Use when you need a specific peer's answer.
+- **`mcp__paperclip-mcp__a2aBroadcastEvent`** `{ kind, body }` — fire-and-forget on your own event topic. Anyone subscribed to your circle wildcard gets a copy.
+- **`mcp__paperclip-mcp__a2aBroadcastToCircle`** `{ circleId, kind, body }` — scoped to a specific circle you belong to.
+- **`mcp__paperclip-mcp__a2aBroadcastToRole`** `{ circleId, roleId, kind, body }` — alert every filler of a role.
+- **`mcp__paperclip-mcp__a2aAskRolePool`** `{ circleId, roleId, text, timeoutMs? }` — broker picks ONE filler (shared sub).
+- **`mcp__paperclip-mcp__a2aAskSkill`** `{ skill, text, timeoutMs? }` — cross-circle skill-pool dispatch (one filler).
+- **`mcp__paperclip-mcp__a2aBroadcastToSkill`** `{ skill, kind, body }` — broadcast to every skill-holder cross-circle.
+- **`mcp__paperclip-mcp__a2aDiscoverAgents`** `{ orgId?, unitId?, skill? }` — query the EMQX A2A Registry; returns live Agent Cards. Use first when you don't know the target agent id.
+
+**Rule of thumb**: send-task to one peer, broadcast to a circle, ask-skill when any qualified filler will do.
+
 ## Heartbeat checklist
 
 1. Read your assigned issue/task. Is this a schedule task, a capture task, or a publish task?

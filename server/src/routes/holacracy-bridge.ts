@@ -364,122 +364,22 @@ export function holacracyBridgeRoutes(
     res.status(200).json({ forwarded: false, parentCircleId: null, raw: data });
   }));
 
-  /**
-   * POST /api/holacracy/talk-to-agent
-   *
-   * Send an A2A Task to a peer agent over MQTT. Proxies
-   * `holacracy-talk-to-agent`.
-   */
-  router.post("/holacracy/talk-to-agent", bridge(async (req, res) => {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const companyId = requireString(body, "companyId");
-    const toAgentId = requireString(body, "toAgentId");
-    const text = requireString(body, "text");
-    const contextId = optionalString(body, "contextId");
-    const awaitReply = optionalBoolean(body, "awaitReply");
-    const timeoutMs = optionalNumber(body, "timeoutMs");
-
-    const requester = await resolveRequester(db, req, companyId);
-    const data = (await executeToolForAgent(TOOL.talkToAgent, requester, {
-      toAgentId,
-      text,
-      ...(contextId ? { contextId } : {}),
-      ...(awaitReply !== undefined ? { awaitReply } : {}),
-      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    })) as
-      | { taskId?: string; contextId?: string; awaited?: boolean; reply?: unknown; timedOut?: boolean }
-      | string
-      | null;
-
-    if (data && typeof data === "object" && ("taskId" in data || "contextId" in data)) {
-      res.status(200).json({
-        issueId: data.taskId ?? null,
-        contextId: data.contextId ?? null,
-        awaited: data.awaited === true,
-        timedOut: data.timedOut === true,
-        reply: data.reply ?? null,
+  // E7 — talk-to-agent / ask-skill / broadcast retired from the HTTP bridge.
+  // All agents now run on bedrock_gateway (T0) and reach equivalent A2A
+  // primitives directly. We keep the routes registered as 410 Gone responses
+  // with a pointer so any straggler external caller gets a clear failure
+  // instead of a silent 404.
+  const retired = (hint: string) =>
+    bridge(async (_req, res) => {
+      res.status(410).json({
+        error: "Route retired — moved to A2A-over-MQTT (E7)",
+        code: "ROUTE_RETIRED",
+        hint: `Publish directly per docs/specs/a2a-mqtt-protocol.md, or use MCP tool ${hint} once E8 ships.`,
       });
-      return;
-    }
-    res.status(200).json({ issueId: null, contextId: null, raw: data });
-  }));
-
-  /**
-   * POST /api/holacracy/ask-skill
-   *
-   * Publish a Task on the skill-pool topic for round-robin pickup by an
-   * accountability-holder. Proxies `holacracy-ask-skill`.
-   */
-  router.post("/holacracy/ask-skill", bridge(async (req, res) => {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const companyId = requireString(body, "companyId");
-    const skill = requireString(body, "skill");
-    const text = requireString(body, "text");
-    const contextId = optionalString(body, "contextId");
-    const awaitReply = optionalBoolean(body, "awaitReply");
-    const timeoutMs = optionalNumber(body, "timeoutMs");
-
-    const requester = await resolveRequester(db, req, companyId);
-    const data = (await executeToolForAgent(TOOL.askSkill, requester, {
-      skill,
-      text,
-      ...(contextId ? { contextId } : {}),
-      ...(awaitReply !== undefined ? { awaitReply } : {}),
-      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    })) as
-      | { taskId?: string; contextId?: string; awaited?: boolean; reply?: unknown; timedOut?: boolean }
-      | string
-      | null;
-
-    if (data && typeof data === "object" && ("taskId" in data || "contextId" in data)) {
-      res.status(200).json({
-        taskId: data.taskId ?? null,
-        contextId: data.contextId ?? null,
-        awaited: data.awaited === true,
-        timedOut: data.timedOut === true,
-        reply: data.reply ?? null,
-      });
-      return;
-    }
-    res.status(200).json({ taskId: null, contextId: null, raw: data });
-  }));
-
-  /**
-   * POST /api/holacracy/broadcast
-   *
-   * Publish an announcement on a circle's event topic. Proxies
-   * `holacracy-broadcast-to-circle`.
-   */
-  router.post("/holacracy/broadcast", bridge(async (req, res) => {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const companyId = requireString(body, "companyId");
-    const circleId = requireString(body, "circleId");
-    const kind = requireString(body, "kind");
-    if (!("body" in body)) {
-      throw {
-        status: 400,
-        code: "VALIDATION_ERROR",
-        message: '"body" is required',
-      };
-    }
-    const broadcastBody = body.body;
-
-    const requester = await resolveRequester(db, req, companyId);
-    const data = (await executeToolForAgent(TOOL.broadcastToCircle, requester, {
-      circleId,
-      kind,
-      body: broadcastBody,
-    })) as { topic?: string; published?: boolean } | string | null;
-
-    if (data && typeof data === "object" && "topic" in data) {
-      res.status(200).json({
-        broadcast: data.published !== false,
-        topic: data.topic ?? null,
-      });
-      return;
-    }
-    res.status(200).json({ broadcast: false, topic: null, raw: data });
-  }));
+    });
+  router.post("/holacracy/talk-to-agent", retired("mcp__paperclip-mcp__a2aSendTask"));
+  router.post("/holacracy/ask-skill", retired("mcp__paperclip-mcp__a2aSendTask (pool variant)"));
+  router.post("/holacracy/broadcast", retired("mcp__paperclip-mcp__a2aBroadcastEvent"));
 
   return router;
 }

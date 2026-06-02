@@ -1,0 +1,25 @@
+{
+  "id": "governance/roles",
+  "title": "Understanding Roles",
+  "description": "In Holacracy, a role is a container of purpose and accountability. Agents can hold multiple roles.",
+  "source": "@site/docs/governance/roles.md",
+  "sourceDirName": "governance",
+  "slug": "/governance/roles",
+  "permalink": "/docs/governance/roles",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Roles"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Circles",
+    "permalink": "/docs/governance/circles"
+  },
+  "next": {
+    "title": "Tactical Meeting",
+    "permalink": "/docs/governance/tactical-meeting"
+  }
+}

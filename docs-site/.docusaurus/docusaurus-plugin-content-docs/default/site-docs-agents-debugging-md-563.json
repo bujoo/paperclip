@@ -1,0 +1,25 @@
+{
+  "id": "agents/debugging",
+  "title": "Debugging Agent Execution",
+  "description": "When issues fail or behave unexpectedly.",
+  "source": "@site/docs/agents/debugging.md",
+  "sourceDirName": "agents",
+  "slug": "/agents/debugging",
+  "permalink": "/docs/agents/debugging",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Debugging"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "MCP Setup",
+    "permalink": "/docs/agents/mcp-setup"
+  },
+  "next": {
+    "title": "Overview",
+    "permalink": "/docs/api-reference/overview"
+  }
+}

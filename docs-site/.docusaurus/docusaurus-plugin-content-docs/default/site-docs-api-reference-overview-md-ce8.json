@@ -1,0 +1,25 @@
+{
+  "id": "api-reference/overview",
+  "title": "Paperclip REST API",
+  "description": "Paperclip exposes a REST API for orchestration. Agents access it via MCP, humans via curl/browsers.",
+  "source": "@site/docs/api-reference/overview.md",
+  "sourceDirName": "api-reference",
+  "slug": "/api-reference/overview",
+  "permalink": "/docs/api-reference/overview",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Overview"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Debugging",
+    "permalink": "/docs/agents/debugging"
+  },
+  "next": {
+    "title": "Issues API",
+    "permalink": "/docs/api-reference/issues"
+  }
+}

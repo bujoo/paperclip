@@ -1,0 +1,1088 @@
+- generic [ref=e3]:
+  - link "Skip to Main Content" [ref=e4] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - img [ref=e10]
+          - generic [ref=e12]:
+            - button "C" [ref=e13]:
+              - link "C" [ref=e14] [cursor=pointer]:
+                - /url: /MYA/dashboard
+                - generic [ref=e17]:
+                  - img [ref=e18]
+                  - generic [ref=e19]: C
+            - status [ref=e20]
+          - button "Add company" [ref=e23]:
+            - img [ref=e24]
+        - complementary [ref=e26]:
+          - generic [ref=e27]:
+            - button "Open ContextHub menu" [ref=e28]:
+              - generic [ref=e30]: ContextHub
+              - img
+            - button [ref=e31]:
+              - img
+          - navigation [ref=e32]:
+            - generic [ref=e33]:
+              - button "New Issue" [ref=e34]:
+                - img [ref=e35]
+                - generic [ref=e38]: New Issue
+              - link "Dashboard" [ref=e39] [cursor=pointer]:
+                - /url: /MYA/dashboard
+                - img [ref=e41]
+                - generic [ref=e46]: Dashboard
+              - link "Inbox 4" [ref=e167] [cursor=pointer]:
+                - /url: /MYA/inbox
+                - img [ref=e49]
+                - generic [ref=e52]: Inbox
+                - generic [ref=e169]: "4"
+              - generic [ref=e170]:
+                - link "Docs" [ref=e172] [cursor=pointer]:
+                  - /url: /MYA/plugins/paperclipai.plugin-docs
+                  - img [ref=e173]
+                  - generic [ref=e176]: Docs
+                - link "Circles" [ref=e178] [cursor=pointer]:
+                  - /url: /MYA/circles
+                  - img [ref=e179]
+                  - generic [ref=e182]: Circles
+                - link "Tensions" [ref=e184] [cursor=pointer]:
+                  - /url: /MYA/tensions
+                  - img [ref=e185]
+                  - generic [ref=e189]: Tensions
+                - link "MCP Servers" [ref=e191] [cursor=pointer]:
+                  - /url: /MYA/plugins/paperclipai.plugin-mcp-manager
+                  - img [ref=e192]
+                  - generic [ref=e195]: MCP Servers
+            - generic [ref=e53]:
+              - generic [ref=e54]: Work
+              - generic [ref=e55]:
+                - link "Issues" [ref=e56] [cursor=pointer]:
+                  - /url: /MYA/issues
+                  - img [ref=e58]
+                  - generic [ref=e61]: Issues
+                - link "Routines" [ref=e62] [cursor=pointer]:
+                  - /url: /MYA/routines
+                  - img [ref=e64]
+                  - generic [ref=e69]: Routines
+                - link "Goals" [ref=e70] [cursor=pointer]:
+                  - /url: /MYA/goals
+                  - img [ref=e72]
+                  - generic [ref=e76]: Goals
+            - generic [ref=e77]:
+              - generic [ref=e79]:
+                - button "Projects" [expanded] [ref=e80]:
+                  - img [ref=e81]
+                  - generic [ref=e83]: Projects
+                - button "New project" [ref=e84]:
+                  - img [ref=e85]
+              - generic [ref=e196]:
+                - generic [ref=e197]:
+                  - button "Operations" [ref=e198]:
+                    - link "Operations" [ref=e200] [cursor=pointer]:
+                      - /url: /MYA/projects/operations/issues
+                      - generic [ref=e202]: Operations
+                  - button "R&D" [ref=e203]:
+                    - link "R&D" [ref=e205] [cursor=pointer]:
+                      - /url: /MYA/projects/r-d/issues
+                      - generic [ref=e207]: R&D
+                  - button "Strategy" [ref=e208]:
+                    - link "Strategy" [ref=e210] [cursor=pointer]:
+                      - /url: /MYA/projects/strategy/issues
+                      - generic [ref=e212]: Strategy
+                  - button "Marketing" [ref=e213]:
+                    - link "Marketing" [ref=e215] [cursor=pointer]:
+                      - /url: /MYA/projects/marketing/issues
+                      - generic [ref=e217]: Marketing
+                  - button "Sales" [ref=e218]:
+                    - link "Sales" [ref=e220] [cursor=pointer]:
+                      - /url: /MYA/projects/sales/issues
+                      - generic [ref=e222]: Sales
+                  - button "Product" [ref=e223]:
+                    - link "Product" [ref=e225] [cursor=pointer]:
+                      - /url: /MYA/projects/product/issues
+                      - generic [ref=e227]: Product
+                  - button "Engineering" [ref=e228]:
+                    - link "Engineering" [ref=e230] [cursor=pointer]:
+                      - /url: /MYA/projects/engineering/issues
+                      - generic [ref=e232]: Engineering
+                  - button "Release & QA" [ref=e233]:
+                    - link "Release & QA" [ref=e235] [cursor=pointer]:
+                      - /url: /MYA/projects/release-qa/issues
+                      - generic [ref=e237]: Release & QA
+                  - button "Project Management" [ref=e238]:
+                    - link "Project Management" [ref=e240] [cursor=pointer]:
+                      - /url: /MYA/projects/project-management/issues
+                      - generic [ref=e242]: Project Management
+                  - button "Documentation" [ref=e243]:
+                    - link "Documentation" [ref=e245] [cursor=pointer]:
+                      - /url: /MYA/projects/documentation/issues
+                      - generic [ref=e247]: Documentation
+                  - button "OCXP" [ref=e248]:
+                    - link "OCXP" [ref=e250] [cursor=pointer]:
+                      - /url: /MYA/projects/ocxp/issues
+                      - generic [ref=e252]: OCXP
+                  - button "Learning & Development" [ref=e253]:
+                    - link "Learning & Development" [ref=e255] [cursor=pointer]:
+                      - /url: /MYA/projects/learning-development/issues
+                      - generic [ref=e257]: Learning & Development
+                - status [ref=e86]
+            - generic [ref=e87]:
+              - generic [ref=e89]:
+                - button "Agents" [expanded] [ref=e90]:
+                  - img [ref=e91]
+                  - generic [ref=e93]: Agents
+                - button "New agent" [ref=e94]:
+                  - img [ref=e95]
+              - generic [ref=e259]:
+                - generic [ref=e260]:
+                  - link "Circle Rep" [ref=e261] [cursor=pointer]:
+                    - /url: /MYA/agents/circle-rep
+                    - img [ref=e262]
+                    - generic [ref=e265]: Circle Rep
+                  - button "Open actions for Circle Rep":
+                    - img
+                - generic [ref=e266]:
+                  - link "Dev Lead" [ref=e267] [cursor=pointer]:
+                    - /url: /MYA/agents/dev-lead
+                    - img [ref=e268]
+                    - generic [ref=e271]: Dev Lead
+                  - button "Open actions for Dev Lead":
+                    - img
+                - generic [ref=e272]:
+                  - link "Doc Lead" [ref=e273] [cursor=pointer]:
+                    - /url: /MYA/agents/doc-lead
+                    - img [ref=e274]
+                    - generic [ref=e277]: Doc Lead
+                  - button "Open actions for Doc Lead":
+                    - img
+                - generic [ref=e278]:
+                  - link "Facilitator" [ref=e279] [cursor=pointer]:
+                    - /url: /MYA/agents/facilitator
+                    - img [ref=e280]
+                    - generic [ref=e283]: Facilitator
+                  - button "Open actions for Facilitator":
+                    - img
+                - generic [ref=e284]:
+                  - link "Growth Lead" [ref=e285] [cursor=pointer]:
+                    - /url: /MYA/agents/growth-lead
+                    - img [ref=e286]
+                    - generic [ref=e289]: Growth Lead
+                  - button "Open actions for Growth Lead":
+                    - img
+                - generic [ref=e290]:
+                  - link "Hermes" [ref=e291] [cursor=pointer]:
+                    - /url: /MYA/agents/hermes
+                    - img [ref=e292]
+                    - generic [ref=e295]: Hermes
+                  - button "Open actions for Hermes":
+                    - img
+                - generic [ref=e296]:
+                  - link "PM Coordinator" [ref=e297] [cursor=pointer]:
+                    - /url: /MYA/agents/pm-coordinator
+                    - img [ref=e298]
+                    - generic [ref=e301]: PM Coordinator
+                  - button "Open actions for PM Coordinator":
+                    - img
+                - generic [ref=e302]:
+                  - link "Product Manager" [ref=e303] [cursor=pointer]:
+                    - /url: /MYA/agents/product-manager
+                    - img [ref=e304]
+                    - generic [ref=e307]: Product Manager
+                  - button "Open actions for Product Manager":
+                    - img
+                - generic [ref=e308]:
+                  - link "Product Researcher" [ref=e309] [cursor=pointer]:
+                    - /url: /MYA/agents/product-researcher
+                    - img [ref=e310]
+                    - generic [ref=e313]: Product Researcher
+                  - button "Open actions for Product Researcher":
+                    - img
+                - generic [ref=e314]:
+                  - link "QA Lead" [ref=e315] [cursor=pointer]:
+                    - /url: /MYA/agents/qa-lead
+                    - img [ref=e316]
+                    - generic [ref=e319]: QA Lead
+                  - button "Open actions for QA Lead":
+                    - img
+                - generic [ref=e320]:
+                  - link "Researcher" [ref=e321] [cursor=pointer]:
+                    - /url: /MYA/agents/researcher
+                    - img [ref=e322]
+                    - generic [ref=e325]: Researcher
+                  - button "Open actions for Researcher":
+                    - img
+                - generic [ref=e326]:
+                  - link "Sales Lead" [ref=e327] [cursor=pointer]:
+                    - /url: /MYA/agents/sales-lead
+                    - img [ref=e328]
+                    - generic [ref=e331]: Sales Lead
+                  - button "Open actions for Sales Lead":
+                    - img
+                - generic [ref=e332]:
+                  - link "Secretary" [ref=e333] [cursor=pointer]:
+                    - /url: /MYA/agents/secretary
+                    - img [ref=e334]
+                    - generic [ref=e337]: Secretary
+                  - button "Open actions for Secretary":
+                    - img
+                - generic [ref=e338]:
+                  - link "Strategist" [ref=e339] [cursor=pointer]:
+                    - /url: /MYA/agents/strategist
+                    - img [ref=e340]
+                    - generic [ref=e343]: Strategist
+                  - button "Open actions for Strategist":
+                    - img
+                - generic [ref=e344]:
+                  - link "Workflow Architect" [ref=e345] [cursor=pointer]:
+                    - /url: /MYA/agents/workflow-architect
+                    - img [ref=e346]
+                    - generic [ref=e349]: Workflow Architect
+                  - button "Open actions for Workflow Architect":
+                    - img
+            - generic [ref=e96]:
+              - generic [ref=e97]: Company
+              - generic [ref=e98]:
+                - link "Org" [ref=e99] [cursor=pointer]:
+                  - /url: /MYA/org
+                  - img [ref=e101]
+                  - generic [ref=e106]: Org
+                - link "Circles" [ref=e107] [cursor=pointer]:
+                  - /url: /MYA/circles
+                  - img [ref=e109]
+                  - generic [ref=e112]: Circles
+                - link "Skills" [ref=e113] [cursor=pointer]:
+                  - /url: /MYA/skills
+                  - img [ref=e115]
+                  - generic [ref=e125]: Skills
+                - link "Costs" [ref=e126] [cursor=pointer]:
+                  - /url: /MYA/costs
+                  - img [ref=e128]
+                  - generic [ref=e130]: Costs
+                - link "Activity" [ref=e131] [cursor=pointer]:
+                  - /url: /MYA/activity
+                  - img [ref=e133]
+                  - generic [ref=e137]: Activity
+                - link "Settings" [ref=e138] [cursor=pointer]:
+                  - /url: /MYA/company/settings
+                  - img [ref=e140]
+                  - generic [ref=e143]: Settings
+      - button "Open account menu" [ref=e145]:
+        - generic [ref=e147]: BO
+        - generic [ref=e148]: Board
+    - generic [ref=e149]:
+      - navigation "breadcrumb" [ref=e153]:
+        - list [ref=e154]:
+          - listitem [ref=e155]:
+            - link "Projects" [ref=e156] [cursor=pointer]:
+              - /url: /MYA/projects
+          - listitem [ref=e157]:
+            - img [ref=e158]
+          - listitem [ref=e160]:
+            - link "Operations" [disabled] [ref=e350]
+      - main [active] [ref=e163]:
+        - generic [ref=e351]:
+          - generic [ref=e352]:
+            - button "Change project color" [ref=e355] [cursor=pointer]
+            - heading "Operations" [level=2] [ref=e357] [cursor=pointer]
+          - tablist [ref=e359]:
+            - tab "Issues" [selected] [ref=e360]
+            - tab "Overview" [ref=e361]
+            - tab "Configuration" [ref=e362]
+            - tab "Budget" [ref=e363]
+            - tab "Agreements" [ref=e364]
+            - tab "Circle" [ref=e365]
+            - tab "Company DNA" [ref=e366]
+            - tab "Cross-Links" [ref=e367]
+            - tab "Cross-Role Requests" [ref=e368]
+            - tab "Elections" [ref=e369]
+            - tab "IDM" [ref=e370]
+            - tab "Releases" [ref=e371]
+            - tab "System Pulse" [ref=e372]
+            - tab "Tactical Pulse" [ref=e373]
+            - tab "Workflows" [ref=e374]
+          - generic [ref=e375]:
+            - generic [ref=e376]:
+              - generic [ref=e377]:
+                - button "New Issue" [ref=e378]:
+                  - img
+                  - generic [ref=e379]: New Issue
+                - generic [ref=e380]:
+                  - img
+                  - textbox "Search issues" [ref=e381]:
+                    - /placeholder: Search issues...
+              - generic [ref=e382]:
+                - generic [ref=e383]:
+                  - button "List view" [ref=e384]:
+                    - img [ref=e385]
+                  - button "Board view" [ref=e386]:
+                    - img [ref=e387]
+                - button "Disable parent-child nesting" [ref=e389]:
+                  - img
+                - button "Columns" [ref=e390]:
+                  - img
+                - button "Filter" [ref=e391]:
+                  - img
+                - button "Sort" [ref=e392]:
+                  - img
+                - button "Group" [ref=e393]:
+                  - img
+            - generic [ref=e395]:
+              - link "Replace NotebookLM in L&D pipeline with autonomous alternative (no OAuth) Done MYA-145 22h ago" [ref=e397] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-145
+                - generic [ref=e398]:
+                  - generic [ref=e399]: Replace NotebookLM in L&D pipeline with autonomous alternative (no OAuth)
+                  - generic [ref=e400]:
+                    - generic "Done" [ref=e403]
+                    - generic [ref=e405]: MYA-145
+                - generic [ref=e408]: 22h ago
+              - 'link "Build workflow template library: define reusable handoff patterns for agent-to-agent delegation Done MYA-144 1d ago" [ref=e410] [cursor=pointer]':
+                - /url: /MYA/issues/MYA-144
+                - generic [ref=e411]:
+                  - generic [ref=e412]: "Build workflow template library: define reusable handoff patterns for agent-to-agent delegation"
+                  - generic [ref=e413]:
+                    - generic "Done" [ref=e416]
+                    - generic [ref=e418]: MYA-144
+                - generic [ref=e421]: 1d ago
+              - link "Score recent sales leads Done MYA-154 1d ago" [ref=e423] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-154
+                - generic [ref=e424]:
+                  - generic [ref=e425]: Score recent sales leads
+                  - generic [ref=e426]:
+                    - generic "Done" [ref=e429]
+                    - generic [ref=e431]: MYA-154
+                - generic [ref=e434]: 1d ago
+              - 'link "Hire or assign Product Researcher role: User Feedback Policy has no owner Done MYA-146 1d ago" [ref=e436] [cursor=pointer]':
+                - /url: /MYA/issues/MYA-146
+                - generic [ref=e437]:
+                  - generic [ref=e438]: "Hire or assign Product Researcher role: User Feedback Policy has no owner"
+                  - generic [ref=e439]:
+                    - generic "Done" [ref=e442]
+                    - generic [ref=e444]: MYA-146
+                - generic [ref=e447]: 1d ago
+              - link "Prepare governance meeting agenda Done MYA-152 1d ago" [ref=e449] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-152
+                - generic [ref=e450]:
+                  - generic [ref=e451]: Prepare governance meeting agenda
+                  - generic [ref=e452]:
+                    - generic "Done" [ref=e455]
+                    - generic [ref=e457]: MYA-152
+                - generic [ref=e460]: 1d ago
+              - link "Prioritize backlog for Q2 Done MYA-156 1d ago" [ref=e462] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-156
+                - generic [ref=e463]:
+                  - generic [ref=e464]: Prioritize backlog for Q2
+                  - generic [ref=e465]:
+                    - generic "Done" [ref=e468]
+                    - generic [ref=e470]: MYA-156
+                - generic [ref=e473]: 1d ago
+              - link "Review product roadmap alignment Done MYA-153 1d ago" [ref=e475] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-153
+                - generic [ref=e476]:
+                  - generic [ref=e477]: Review product roadmap alignment
+                  - generic [ref=e478]:
+                    - generic "Done" [ref=e481]
+                    - generic [ref=e483]: MYA-153
+                - generic [ref=e486]: 1d ago
+              - generic [ref=e487]:
+                - link "Weekly L&D Intelligence Briefing - Week of May 26-31 Blocked · 0 unresolved blockers need attention MYA-130 1d ago" [ref=e488] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-130
+                  - generic [ref=e489]:
+                    - generic [ref=e490]: Weekly L&D Intelligence Briefing - Week of May 26-31
+                    - generic [ref=e491]:
+                      - button [ref=e492]:
+                        - img [ref=e493]
+                      - generic "Blocked · 0 unresolved blockers need attention" [ref=e497]
+                      - generic [ref=e498]: MYA-130
+                  - generic [ref=e501]: 1d ago
+                - link "Recover stalled issue MYA-130 Done MYA-163 1d ago" [ref=e503] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-163
+                  - generic [ref=e504]:
+                    - generic [ref=e505]: Recover stalled issue MYA-130
+                    - generic [ref=e506]:
+                      - generic "Done" [ref=e509]
+                      - generic [ref=e511]: MYA-163
+                  - generic [ref=e514]: 1d ago
+              - generic [ref=e515]:
+                - link "Enable heartbeat for all agents (heartbeat.enabled=false silently strands issues) Blocked · 1 unresolved blocker needs attention MYA-142 1d ago" [ref=e516] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-142
+                  - generic [ref=e517]:
+                    - generic [ref=e518]: Enable heartbeat for all agents (heartbeat.enabled=false silently strands issues)
+                    - generic [ref=e519]:
+                      - button [ref=e520]:
+                        - img [ref=e521]
+                      - generic "Blocked · 1 unresolved blocker needs attention" [ref=e525]
+                      - generic [ref=e526]: MYA-142
+                  - generic [ref=e529]: 1d ago
+                - link "Recover stalled issue MYA-142 Blocked · 0 unresolved blockers need attention MYA-162 22h ago" [ref=e531] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-162
+                  - generic [ref=e532]:
+                    - generic [ref=e533]: Recover stalled issue MYA-142
+                    - generic [ref=e534]:
+                      - generic "Blocked · 0 unresolved blockers need attention" [ref=e537]
+                      - generic [ref=e538]: MYA-162
+                  - generic [ref=e541]: 22h ago
+              - 'link "Improve PM Coordinator routing accuracy: 0.5 actual vs 0.7 target Done MYA-147 1d ago" [ref=e543] [cursor=pointer]':
+                - /url: /MYA/issues/MYA-147
+                - generic [ref=e544]:
+                  - generic [ref=e545]: "Improve PM Coordinator routing accuracy: 0.5 actual vs 0.7 target"
+                  - generic [ref=e546]:
+                    - generic "Done" [ref=e549]
+                    - generic [ref=e551]: MYA-147
+                - generic [ref=e554]: 1d ago
+              - link "Triage unassigned backlog issues Done MYA-151 1d ago" [ref=e556] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-151
+                - generic [ref=e557]:
+                  - generic [ref=e558]: Triage unassigned backlog issues
+                  - generic [ref=e559]:
+                    - generic "Done" [ref=e562]
+                    - generic [ref=e564]: MYA-151
+                - generic [ref=e567]: 1d ago
+              - link "Triage unassigned backlog issues Done MYA-150 1d ago" [ref=e569] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-150
+                - generic [ref=e570]:
+                  - generic [ref=e571]: Triage unassigned backlog issues
+                  - generic [ref=e572]:
+                    - generic "Done" [ref=e575]
+                    - generic [ref=e577]: MYA-150
+                - generic [ref=e580]: 1d ago
+              - generic [ref=e581]:
+                - link "improve all agents Done MYA-141 1d ago" [ref=e582] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-141
+                  - generic [ref=e583]:
+                    - generic [ref=e584]: improve all agents
+                    - generic [ref=e585]:
+                      - button [ref=e586]:
+                        - img [ref=e587]
+                      - generic "Done" [ref=e591]
+                      - generic [ref=e593]: MYA-141
+                  - generic [ref=e596]: 1d ago
+                - link "Unblock liveness incident for MYA-141 Done MYA-160 1d ago" [ref=e598] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-160
+                  - generic [ref=e599]:
+                    - generic [ref=e600]: Unblock liveness incident for MYA-141
+                    - generic [ref=e601]:
+                      - generic "Done" [ref=e604]
+                      - generic [ref=e606]: MYA-160
+                  - generic [ref=e609]: 1d ago
+              - link "[Shared] Agent Roster & Responsibilities Done MYA-159 1d ago" [ref=e611] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-159
+                - generic [ref=e612]:
+                  - generic [ref=e613]: "[Shared] Agent Roster & Responsibilities"
+                  - generic [ref=e614]:
+                    - generic "Done" [ref=e617]
+                    - generic [ref=e619]: MYA-159
+                - generic [ref=e622]: 1d ago
+              - link "Analyze growth metrics (last 7d) Done MYA-155 1d ago" [ref=e624] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-155
+                - generic [ref=e625]:
+                  - generic [ref=e626]: Analyze growth metrics (last 7d)
+                  - generic [ref=e627]:
+                    - generic "Done" [ref=e630]
+                    - generic [ref=e632]: MYA-155
+                - generic [ref=e635]: 1d ago
+              - link "Assess test coverage Done MYA-157 1d ago" [ref=e637] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-157
+                - generic [ref=e638]:
+                  - generic [ref=e639]: Assess test coverage
+                  - generic [ref=e640]:
+                    - generic "Done" [ref=e643]
+                    - generic [ref=e645]: MYA-157
+                - generic [ref=e648]: 1d ago
+              - link "[Recovery] Verify agent is online Done MYA-158 1d ago" [ref=e650] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-158
+                - generic [ref=e651]:
+                  - generic [ref=e652]: "[Recovery] Verify agent is online"
+                  - generic [ref=e653]:
+                    - generic "Done" [ref=e656]
+                    - generic [ref=e658]: MYA-158
+                - generic [ref=e661]: 1d ago
+              - link "Resolve the tentions Done MYA-125 1d ago" [ref=e663] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-125
+                - generic [ref=e664]:
+                  - generic [ref=e665]: Resolve the tentions
+                  - generic [ref=e666]:
+                    - generic "Done" [ref=e669]
+                    - generic [ref=e671]: MYA-125
+                - generic [ref=e674]: 1d ago
+              - link "Agentic and teamwork Done MYA-126 1d ago" [ref=e676] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-126
+                - generic [ref=e677]:
+                  - generic [ref=e678]: Agentic and teamwork
+                  - generic [ref=e679]:
+                    - generic "Done" [ref=e682]
+                    - generic [ref=e684]: MYA-126
+                - generic [ref=e687]: 1d ago
+              - generic [ref=e688]:
+                - link "Bug in board approval Blocked · 1 unresolved blocker needs attention MYA-139 1d ago" [ref=e689] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-139
+                  - generic [ref=e690]:
+                    - generic [ref=e691]: Bug in board approval
+                    - generic [ref=e692]:
+                      - button [ref=e693]:
+                        - img [ref=e694]
+                      - generic "Blocked · 1 unresolved blocker needs attention" [ref=e698]
+                      - generic [ref=e699]: MYA-139
+                  - generic [ref=e702]: 1d ago
+                - link "Recover stalled issue MYA-139 Blocked · 0 unresolved blockers need attention MYA-148 22h ago" [ref=e704] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-148
+                  - generic [ref=e705]:
+                    - generic [ref=e706]: Recover stalled issue MYA-139
+                    - generic [ref=e707]:
+                      - generic "Blocked · 0 unresolved blockers need attention" [ref=e710]
+                      - generic [ref=e711]: MYA-148
+                  - generic [ref=e714]: 22h ago
+              - link "L&D Weekly Briefing - Week 1 (May 25-31, 2026) Done MYA-138 1d ago" [ref=e716] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-138
+                - generic [ref=e717]:
+                  - generic [ref=e718]: L&D Weekly Briefing - Week 1 (May 25-31, 2026)
+                  - generic [ref=e719]:
+                    - generic "Done" [ref=e722]
+                    - generic [ref=e724]: MYA-138
+                - generic [ref=e727]: 1d ago
+              - link "Tensions Board Done MYA-124 4d ago" [ref=e729] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-124
+                - generic [ref=e730]:
+                  - generic [ref=e731]: Tensions Board
+                  - generic [ref=e732]:
+                    - generic "Done" [ref=e735]
+                    - generic [ref=e737]: MYA-124
+                - generic [ref=e740]: 4d ago
+              - generic [ref=e741]:
+                - 'link "Strategic Verdict: Apply Holacracy Debate Findings to Our AI Agent Setup Done MYA-59 4d ago" [ref=e742] [cursor=pointer]':
+                  - /url: /MYA/issues/MYA-59
+                  - generic [ref=e743]:
+                    - generic [ref=e744]: "Strategic Verdict: Apply Holacracy Debate Findings to Our AI Agent Setup"
+                    - generic [ref=e745]:
+                      - button [ref=e746]:
+                        - img [ref=e747]
+                      - generic "Done" [ref=e751]
+                      - generic [ref=e753]: MYA-59
+                  - generic [ref=e756]: 4d ago
+                - link "Recover stalled issue MYA-59 Done MYA-64 4d ago" [ref=e758] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-64
+                  - generic [ref=e759]:
+                    - generic [ref=e760]: Recover stalled issue MYA-59
+                    - generic [ref=e761]:
+                      - generic "Done" [ref=e764]
+                      - generic [ref=e766]: MYA-64
+                  - generic [ref=e769]: 4d ago
+              - 'link "Backlog: Holacracy actions 3, 4, 5, 7, 8, 9, 10 (deferred from MYA-59) Done MYA-80 4d ago" [ref=e771] [cursor=pointer]':
+                - /url: /MYA/issues/MYA-80
+                - generic [ref=e772]:
+                  - generic [ref=e773]: "Backlog: Holacracy actions 3, 4, 5, 7, 8, 9, 10 (deferred from MYA-59)"
+                  - generic [ref=e774]:
+                    - generic "Done" [ref=e777]
+                    - generic [ref=e779]: MYA-80
+                - generic [ref=e782]: 4d ago
+              - generic [ref=e783]:
+                - link "hermes_local adapter dying with process_lost (no tokens, no error) — Dev Lead Bedrock dispatches Done MYA-94 4d ago" [ref=e784] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-94
+                  - generic [ref=e785]:
+                    - generic [ref=e786]: hermes_local adapter dying with process_lost (no tokens, no error) — Dev Lead Bedrock dispatches
+                    - generic [ref=e787]:
+                      - button [ref=e788]:
+                        - img [ref=e789]
+                      - generic "Done" [ref=e793]
+                      - generic [ref=e795]: MYA-94
+                  - generic [ref=e798]: 4d ago
+                - link "Unblock liveness incident for MYA-94 Done MYA-123 4d ago" [ref=e800] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-123
+                  - generic [ref=e801]:
+                    - generic [ref=e802]: Unblock liveness incident for MYA-94
+                    - generic [ref=e803]:
+                      - generic "Done" [ref=e806]
+                      - generic [ref=e808]: MYA-123
+                  - generic [ref=e811]: 4d ago
+                - link "Unblock liveness incident for MYA-94 Done MYA-114 4d ago" [ref=e813] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-114
+                  - generic [ref=e814]:
+                    - generic [ref=e815]: Unblock liveness incident for MYA-94
+                    - generic [ref=e816]:
+                      - generic "Done" [ref=e819]
+                      - generic [ref=e821]: MYA-114
+                  - generic [ref=e824]: 4d ago
+                - generic [ref=e825]:
+                  - link "Review productivity for MYA-94 Done MYA-104 4d ago" [ref=e826] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-104
+                    - generic [ref=e827]:
+                      - generic [ref=e828]: Review productivity for MYA-94
+                      - generic [ref=e829]:
+                        - button [ref=e830]:
+                          - img [ref=e831]
+                        - generic "Done" [ref=e835]
+                        - generic [ref=e837]: MYA-104
+                    - generic [ref=e840]: 4d ago
+                  - link "Recover stalled issue MYA-104 Done MYA-105 4d ago" [ref=e842] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-105
+                    - generic [ref=e843]:
+                      - generic [ref=e844]: Recover stalled issue MYA-104
+                      - generic [ref=e845]:
+                        - generic "Done" [ref=e848]
+                        - generic [ref=e850]: MYA-105
+                    - generic [ref=e853]: 4d ago
+              - generic [ref=e854]:
+                - 'link "Holacracy AI-native execution: actions 1, 2, 6 (from MYA-59 verdict) Done MYA-76 4d ago" [ref=e855] [cursor=pointer]':
+                  - /url: /MYA/issues/MYA-76
+                  - generic [ref=e856]:
+                    - generic [ref=e857]: "Holacracy AI-native execution: actions 1, 2, 6 (from MYA-59 verdict)"
+                    - generic [ref=e858]:
+                      - button [ref=e859]:
+                        - img [ref=e860]
+                      - generic "Done" [ref=e864]
+                      - generic [ref=e866]: MYA-76
+                  - generic [ref=e869]: 4d ago
+                - generic [ref=e870]:
+                  - 'link "E2E test: governance trigger → 3-of-3 approval chain Blocked · 1 unresolved blocker needs attention MYA-118 1d ago" [ref=e871] [cursor=pointer]':
+                    - /url: /MYA/issues/MYA-118
+                    - generic [ref=e872]:
+                      - generic [ref=e873]: "E2E test: governance trigger → 3-of-3 approval chain"
+                      - generic [ref=e874]:
+                        - button [ref=e875]:
+                          - img [ref=e876]
+                        - generic "Blocked · 1 unresolved blocker needs attention" [ref=e880]
+                        - generic [ref=e881]: MYA-118
+                    - generic [ref=e884]: 1d ago
+                  - link "Recover stalled issue MYA-118 Blocked · 0 unresolved blockers need attention MYA-161 1d ago" [ref=e886] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-161
+                    - generic [ref=e887]:
+                      - generic [ref=e888]: Recover stalled issue MYA-118
+                      - generic [ref=e889]:
+                        - generic "Blocked · 0 unresolved blockers need attention" [ref=e892]
+                        - generic [ref=e893]: MYA-161
+                    - generic [ref=e896]: 1d ago
+                  - link "Review productivity for MYA-118 Done MYA-122 4d ago" [ref=e898] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-122
+                    - generic [ref=e899]:
+                      - generic [ref=e900]: Review productivity for MYA-118
+                      - generic [ref=e901]:
+                        - generic "Done" [ref=e904]
+                        - generic [ref=e906]: MYA-122
+                    - generic [ref=e909]: 4d ago
+                  - link "Recover stalled issue MYA-118 Done MYA-119 4d ago" [ref=e911] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-119
+                    - generic [ref=e912]:
+                      - generic [ref=e913]: Recover stalled issue MYA-118
+                      - generic [ref=e914]:
+                        - generic "Done" [ref=e917]
+                        - generic [ref=e919]: MYA-119
+                    - generic [ref=e922]: 4d ago
+                  - link "Recover stalled issue MYA-118 Done MYA-121 4d ago" [ref=e924] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-121
+                    - generic [ref=e925]:
+                      - generic [ref=e926]: Recover stalled issue MYA-118
+                      - generic [ref=e927]:
+                        - generic "Done" [ref=e930]
+                        - generic [ref=e932]: MYA-121
+                    - generic [ref=e935]: 4d ago
+                - generic [ref=e936]:
+                  - 'link "Action 2: Nightly accountability scanner cron → auto-file governance tensions Done MYA-78 4d ago" [ref=e937] [cursor=pointer]':
+                    - /url: /MYA/issues/MYA-78
+                    - generic [ref=e938]:
+                      - generic [ref=e939]: "Action 2: Nightly accountability scanner cron → auto-file governance tensions"
+                      - generic [ref=e940]:
+                        - button [ref=e941]:
+                          - img [ref=e942]
+                        - generic "Done" [ref=e946]
+                        - generic [ref=e948]: MYA-78
+                    - generic [ref=e951]: 4d ago
+                  - link "Recover stalled issue MYA-78 Done MYA-120 4d ago" [ref=e953] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-120
+                    - generic [ref=e954]:
+                      - generic [ref=e955]: Recover stalled issue MYA-78
+                      - generic [ref=e956]:
+                        - generic "Done" [ref=e959]
+                        - generic [ref=e961]: MYA-120
+                    - generic [ref=e964]: 4d ago
+                  - link "Recover stalled issue MYA-78 Done MYA-115 4d ago" [ref=e966] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-115
+                    - generic [ref=e967]:
+                      - generic [ref=e968]: Recover stalled issue MYA-78
+                      - generic [ref=e969]:
+                        - generic "Done" [ref=e972]
+                        - generic [ref=e974]: MYA-115
+                    - generic [ref=e977]: 4d ago
+                  - link "Recover stalled issue MYA-78 Done MYA-111 4d ago" [ref=e979] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-111
+                    - generic [ref=e980]:
+                      - generic [ref=e981]: Recover stalled issue MYA-78
+                      - generic [ref=e982]:
+                        - generic "Done" [ref=e985]
+                        - generic [ref=e987]: MYA-111
+                    - generic [ref=e990]: 4d ago
+                  - link "Recover stalled issue MYA-78 Done MYA-101 4d ago" [ref=e992] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-101
+                    - generic [ref=e993]:
+                      - generic [ref=e994]: Recover stalled issue MYA-78
+                      - generic [ref=e995]:
+                        - generic "Done" [ref=e998]
+                        - generic [ref=e1000]: MYA-101
+                    - generic [ref=e1003]: 4d ago
+                  - link "Recover stalled issue MYA-78 Done MYA-97 4d ago" [ref=e1005] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-97
+                    - generic [ref=e1006]:
+                      - generic [ref=e1007]: Recover stalled issue MYA-78
+                      - generic [ref=e1008]:
+                        - generic "Done" [ref=e1011]
+                        - generic [ref=e1013]: MYA-97
+                    - generic [ref=e1016]: 4d ago
+                  - link "Recover stalled issue MYA-78 Done MYA-90 4d ago" [ref=e1018] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-90
+                    - generic [ref=e1019]:
+                      - generic [ref=e1020]: Recover stalled issue MYA-78
+                      - generic [ref=e1021]:
+                        - generic "Done" [ref=e1024]
+                        - generic [ref=e1026]: MYA-90
+                    - generic [ref=e1029]: 4d ago
+                  - link "Review productivity for MYA-78 Done MYA-92 4d ago" [ref=e1031] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-92
+                    - generic [ref=e1032]:
+                      - generic [ref=e1033]: Review productivity for MYA-78
+                      - generic [ref=e1034]:
+                        - generic "Done" [ref=e1037]
+                        - generic [ref=e1039]: MYA-92
+                    - generic [ref=e1042]: 4d ago
+                  - link "Recover stalled issue MYA-78 Done MYA-85 4d ago" [ref=e1044] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-85
+                    - generic [ref=e1045]:
+                      - generic [ref=e1046]: Recover stalled issue MYA-78
+                      - generic [ref=e1047]:
+                        - generic "Done" [ref=e1050]
+                        - generic [ref=e1052]: MYA-85
+                    - generic [ref=e1055]: 4d ago
+                  - link "Recover stalled issue MYA-78 Done MYA-84 4d ago" [ref=e1057] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-84
+                    - generic [ref=e1058]:
+                      - generic [ref=e1059]: Recover stalled issue MYA-78
+                      - generic [ref=e1060]:
+                        - generic "Done" [ref=e1063]
+                        - generic [ref=e1065]: MYA-84
+                    - generic [ref=e1068]: 4d ago
+                  - link "Recover stalled issue MYA-78 Done MYA-82 4d ago" [ref=e1070] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-82
+                    - generic [ref=e1071]:
+                      - generic [ref=e1072]: Recover stalled issue MYA-78
+                      - generic [ref=e1073]:
+                        - generic "Done" [ref=e1076]
+                        - generic [ref=e1078]: MYA-82
+                    - generic [ref=e1081]: 4d ago
+                - generic [ref=e1082]:
+                  - 'link "Action 6: Codify two governance triggers + 3-of-3 async approval (Strategist + PM + Dev Lead) Done MYA-79 4d ago" [ref=e1083] [cursor=pointer]':
+                    - /url: /MYA/issues/MYA-79
+                    - generic [ref=e1084]:
+                      - generic [ref=e1085]: "Action 6: Codify two governance triggers + 3-of-3 async approval (Strategist + PM + Dev Lead)"
+                      - generic [ref=e1086]:
+                        - button [ref=e1087]:
+                          - img [ref=e1088]
+                        - generic "Done" [ref=e1092]
+                        - generic [ref=e1094]: MYA-79
+                    - generic [ref=e1097]: 4d ago
+                  - link "Recover stalled issue MYA-79 Done MYA-116 4d ago" [ref=e1099] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-116
+                    - generic [ref=e1100]:
+                      - generic [ref=e1101]: Recover stalled issue MYA-79
+                      - generic [ref=e1102]:
+                        - generic "Done" [ref=e1105]
+                        - generic [ref=e1107]: MYA-116
+                    - generic [ref=e1110]: 4d ago
+                  - link "Review productivity for MYA-79 Done MYA-112 4d ago" [ref=e1112] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-112
+                    - generic [ref=e1113]:
+                      - generic [ref=e1114]: Review productivity for MYA-79
+                      - generic [ref=e1115]:
+                        - generic "Done" [ref=e1118]
+                        - generic [ref=e1120]: MYA-112
+                    - generic [ref=e1123]: 4d ago
+                  - link "Recover stalled issue MYA-79 Done MYA-91 4d ago" [ref=e1125] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-91
+                    - generic [ref=e1126]:
+                      - generic [ref=e1127]: Recover stalled issue MYA-79
+                      - generic [ref=e1128]:
+                        - generic "Done" [ref=e1131]
+                        - generic [ref=e1133]: MYA-91
+                    - generic [ref=e1136]: 4d ago
+                  - link "Recover stalled issue MYA-79 Done MYA-88 4d ago" [ref=e1138] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-88
+                    - generic [ref=e1139]:
+                      - generic [ref=e1140]: Recover stalled issue MYA-79
+                      - generic [ref=e1141]:
+                        - generic "Done" [ref=e1144]
+                        - generic [ref=e1146]: MYA-88
+                    - generic [ref=e1149]: 4d ago
+                - link "Recover stalled issue MYA-76 Done MYA-117 4d ago" [ref=e1151] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-117
+                  - generic [ref=e1152]:
+                    - generic [ref=e1153]: Recover stalled issue MYA-76
+                    - generic [ref=e1154]:
+                      - generic "Done" [ref=e1157]
+                      - generic [ref=e1159]: MYA-117
+                  - generic [ref=e1162]: 4d ago
+                - link "Recover stalled issue MYA-76 Done MYA-87 4d ago" [ref=e1164] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-87
+                  - generic [ref=e1165]:
+                    - generic [ref=e1166]: Recover stalled issue MYA-76
+                    - generic [ref=e1167]:
+                      - generic "Done" [ref=e1170]
+                      - generic [ref=e1172]: MYA-87
+                  - generic [ref=e1175]: 4d ago
+                - generic [ref=e1176]:
+                  - 'link "Action 1: Add structured `accountabilities` schema + backfill 14 agents Done MYA-77 4d ago" [ref=e1177] [cursor=pointer]':
+                    - /url: /MYA/issues/MYA-77
+                    - generic [ref=e1178]:
+                      - generic [ref=e1179]: "Action 1: Add structured `accountabilities` schema + backfill 14 agents"
+                      - generic [ref=e1180]:
+                        - button [ref=e1181]:
+                          - img [ref=e1182]
+                        - generic "Done" [ref=e1186]
+                        - generic [ref=e1188]: MYA-77
+                    - generic [ref=e1191]: 4d ago
+                  - link "Recover stalled issue MYA-77 Done MYA-89 4d ago" [ref=e1193] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-89
+                    - generic [ref=e1194]:
+                      - generic [ref=e1195]: Recover stalled issue MYA-77
+                      - generic [ref=e1196]:
+                        - generic "Done" [ref=e1199]
+                        - generic [ref=e1201]: MYA-89
+                    - generic [ref=e1204]: 4d ago
+                  - link "Recover stalled issue MYA-77 Done MYA-83 4d ago" [ref=e1206] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-83
+                    - generic [ref=e1207]:
+                      - generic [ref=e1208]: Recover stalled issue MYA-77
+                      - generic [ref=e1209]:
+                        - generic "Done" [ref=e1212]
+                        - generic [ref=e1214]: MYA-83
+                    - generic [ref=e1217]: 4d ago
+                - link "Review productivity for MYA-76 Done MYA-86 4d ago" [ref=e1219] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-86
+                  - generic [ref=e1220]:
+                    - generic [ref=e1221]: Review productivity for MYA-76
+                    - generic [ref=e1222]:
+                      - generic "Done" [ref=e1225]
+                      - generic [ref=e1227]: MYA-86
+                  - generic [ref=e1230]: 4d ago
+                - link "Recover stalled issue MYA-76 Done MYA-81 4d ago" [ref=e1232] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-81
+                  - generic [ref=e1233]:
+                    - generic [ref=e1234]: Recover stalled issue MYA-76
+                    - generic [ref=e1235]:
+                      - generic "Done" [ref=e1238]
+                      - generic [ref=e1240]: MYA-81
+                  - generic [ref=e1243]: 4d ago
+              - generic [ref=e1244]:
+                - link "Test Bedrock Issue Done MYA-107 4d ago" [ref=e1245] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-107
+                  - generic [ref=e1246]:
+                    - generic [ref=e1247]: Test Bedrock Issue
+                    - generic [ref=e1248]:
+                      - button [ref=e1249]:
+                        - img [ref=e1250]
+                      - generic "Done" [ref=e1254]
+                      - generic [ref=e1256]: MYA-107
+                  - generic [ref=e1259]: 4d ago
+                - link "Recover stalled issue MYA-107 Done MYA-109 4d ago" [ref=e1261] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-109
+                  - generic [ref=e1262]:
+                    - generic [ref=e1263]: Recover stalled issue MYA-107
+                    - generic [ref=e1264]:
+                      - generic "Done" [ref=e1267]
+                      - generic [ref=e1269]: MYA-109
+                  - generic [ref=e1272]: 4d ago
+              - link "GET /api/agents/:id strips accountabilities (list endpoint includes them) Done MYA-102 4d ago" [ref=e1274] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-102
+                - generic [ref=e1275]:
+                  - generic [ref=e1276]: GET /api/agents/:id strips accountabilities (list endpoint includes them)
+                  - generic [ref=e1277]:
+                    - generic "Done" [ref=e1280]
+                    - generic [ref=e1282]: MYA-102
+                - generic [ref=e1285]: 4d ago
+              - 'link "Bug: Recovery scheduler spawns new execution runs for already-completed issues Done MYA-75 4d ago" [ref=e1287] [cursor=pointer]':
+                - /url: /MYA/issues/MYA-75
+                - generic [ref=e1288]:
+                  - generic [ref=e1289]: "Bug: Recovery scheduler spawns new execution runs for already-completed issues"
+                  - generic [ref=e1290]:
+                    - generic "Done" [ref=e1293]
+                    - generic [ref=e1295]: MYA-75
+                - generic [ref=e1298]: 4d ago
+              - link "token cost Done MYA-73 4d ago" [ref=e1300] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-73
+                - generic [ref=e1301]:
+                  - generic [ref=e1302]: token cost
+                  - generic [ref=e1303]:
+                    - generic "Done" [ref=e1306]
+                    - generic [ref=e1308]: MYA-73
+                - generic [ref=e1311]: 4d ago
+              - link "Task routing Done MYA-74 4d ago" [ref=e1313] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-74
+                - generic [ref=e1314]:
+                  - generic [ref=e1315]: Task routing
+                  - generic [ref=e1316]:
+                    - generic "Done" [ref=e1319]
+                    - generic [ref=e1321]: MYA-74
+                - generic [ref=e1324]: 4d ago
+              - link "Spin up Odoo Community + odoo-mcp wrapper Done MYA-72 4d ago" [ref=e1326] [cursor=pointer]:
+                - /url: /MYA/issues/MYA-72
+                - generic [ref=e1327]:
+                  - generic [ref=e1328]: Spin up Odoo Community + odoo-mcp wrapper
+                  - generic [ref=e1329]:
+                    - generic "Done" [ref=e1332]
+                    - generic [ref=e1334]: MYA-72
+                - generic [ref=e1337]: 4d ago
+              - generic [ref=e1338]:
+                - 'link "Business Tooling Stack Research: CRM, Marketing, Sales & Operations Done MYA-60 4d ago" [ref=e1339] [cursor=pointer]':
+                  - /url: /MYA/issues/MYA-60
+                  - generic [ref=e1340]:
+                    - generic [ref=e1341]: "Business Tooling Stack Research: CRM, Marketing, Sales & Operations"
+                    - generic [ref=e1342]:
+                      - button [ref=e1343]:
+                        - img [ref=e1344]
+                      - generic "Done" [ref=e1348]
+                      - generic [ref=e1350]: MYA-60
+                  - generic [ref=e1353]: 4d ago
+                - link "Recover stalled issue MYA-60 Cancelled MYA-61 4d ago" [ref=e1355] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-61
+                  - generic [ref=e1356]:
+                    - generic [ref=e1357]: Recover stalled issue MYA-60
+                    - generic [ref=e1358]:
+                      - generic "Cancelled" [ref=e1361]
+                      - generic [ref=e1362]: MYA-61
+                  - generic [ref=e1365]: 4d ago
+                - link "Recover stalled issue MYA-60 Cancelled MYA-71 4d ago" [ref=e1367] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-71
+                  - generic [ref=e1368]:
+                    - generic [ref=e1369]: Recover stalled issue MYA-60
+                    - generic [ref=e1370]:
+                      - generic "Cancelled" [ref=e1373]
+                      - generic [ref=e1374]: MYA-71
+                  - generic [ref=e1377]: 4d ago
+                - generic [ref=e1378]:
+                  - link "Review productivity for MYA-60 Done MYA-68 4d ago" [ref=e1379] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-68
+                    - generic [ref=e1380]:
+                      - generic [ref=e1381]: Review productivity for MYA-60
+                      - generic [ref=e1382]:
+                        - button [ref=e1383]:
+                          - img [ref=e1384]
+                        - generic "Done" [ref=e1388]
+                        - generic [ref=e1390]: MYA-68
+                    - generic [ref=e1393]: 4d ago
+                  - link "Recover stalled issue MYA-68 Cancelled MYA-70 4d ago" [ref=e1395] [cursor=pointer]:
+                    - /url: /MYA/issues/MYA-70
+                    - generic [ref=e1396]:
+                      - generic [ref=e1397]: Recover stalled issue MYA-68
+                      - generic [ref=e1398]:
+                        - generic "Cancelled" [ref=e1401]
+                        - generic [ref=e1402]: MYA-70
+                    - generic [ref=e1405]: 4d ago
+                - link "Recover stalled issue MYA-60 Done MYA-69 4d ago" [ref=e1407] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-69
+                  - generic [ref=e1408]:
+                    - generic [ref=e1409]: Recover stalled issue MYA-60
+                    - generic [ref=e1410]:
+                      - generic "Done" [ref=e1413]
+                      - generic [ref=e1415]: MYA-69
+                  - generic [ref=e1418]: 4d ago
+                - link "Recover stalled issue MYA-60 Done MYA-67 4d ago" [ref=e1420] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-67
+                  - generic [ref=e1421]:
+                    - generic [ref=e1422]: Recover stalled issue MYA-60
+                    - generic [ref=e1423]:
+                      - generic "Done" [ref=e1426]
+                      - generic [ref=e1428]: MYA-67
+                  - generic [ref=e1431]: 4d ago
+                - link "Recover stalled issue MYA-60 Done MYA-65 4d ago" [ref=e1433] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-65
+                  - generic [ref=e1434]:
+                    - generic [ref=e1435]: Recover stalled issue MYA-60
+                    - generic [ref=e1436]:
+                      - generic "Done" [ref=e1439]
+                      - generic [ref=e1441]: MYA-65
+                  - generic [ref=e1444]: 4d ago
+              - generic [ref=e1445]:
+                - 'link "Deep Research: Holacracy as the Operating System for AI Agent Teams — The Full Debate Done MYA-58 4d ago" [ref=e1446] [cursor=pointer]':
+                  - /url: /MYA/issues/MYA-58
+                  - generic [ref=e1447]:
+                    - generic [ref=e1448]: "Deep Research: Holacracy as the Operating System for AI Agent Teams — The Full Debate"
+                    - generic [ref=e1449]:
+                      - button [ref=e1450]:
+                        - img [ref=e1451]
+                      - generic "Done" [ref=e1455]
+                      - generic [ref=e1457]: MYA-58
+                  - generic [ref=e1460]: 4d ago
+                - link "Recover stalled issue MYA-58 Done MYA-63 4d ago" [ref=e1462] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-63
+                  - generic [ref=e1463]:
+                    - generic [ref=e1464]: Recover stalled issue MYA-58
+                    - generic [ref=e1465]:
+                      - generic "Done" [ref=e1468]
+                      - generic [ref=e1470]: MYA-63
+                  - generic [ref=e1473]: 4d ago
+              - generic [ref=e1474]:
+                - 'link "Holacracy Deepdive: Weave Holacracy principles deeper into Paperclip & Hermes agents Done MYA-47 4d ago" [ref=e1475] [cursor=pointer]':
+                  - /url: /MYA/issues/MYA-47
+                  - generic [ref=e1476]:
+                    - generic [ref=e1477]: "Holacracy Deepdive: Weave Holacracy principles deeper into Paperclip & Hermes agents"
+                    - generic [ref=e1478]:
+                      - button [ref=e1479]:
+                        - img [ref=e1480]
+                      - generic "Done" [ref=e1484]
+                      - generic [ref=e1486]: MYA-47
+                  - generic [ref=e1489]: 4d ago
+                - link "Write Holacracy Power-Up Report (tactical meetings, governance, tensions→actions pipeline) Done MYA-48 4d ago" [ref=e1491] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-48
+                  - generic [ref=e1492]:
+                    - generic [ref=e1493]: Write Holacracy Power-Up Report (tactical meetings, governance, tensions→actions pipeline)
+                    - generic [ref=e1494]:
+                      - generic "Done" [ref=e1497]
+                      - generic [ref=e1499]: MYA-48
+                  - generic [ref=e1502]: 4d ago
+                - link "Unblock liveness incident for MYA-47 Done MYA-57 4d ago" [ref=e1504] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-57
+                  - generic [ref=e1505]:
+                    - generic [ref=e1506]: Unblock liveness incident for MYA-47
+                    - generic [ref=e1507]:
+                      - generic "Done" [ref=e1510]
+                      - generic [ref=e1512]: MYA-57
+                  - generic [ref=e1515]: 4d ago
+                - link "Write Prioritized Implementation Backlog + Cron Schedule Done MYA-50 4d ago" [ref=e1517] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-50
+                  - generic [ref=e1518]:
+                    - generic [ref=e1519]: Write Prioritized Implementation Backlog + Cron Schedule
+                    - generic [ref=e1520]:
+                      - generic "Done" [ref=e1523]
+                      - generic [ref=e1525]: MYA-50
+                  - generic [ref=e1528]: 4d ago
+                - 'link "Design Master Workflow Architecture: Holacracy process flows, decision trees, and agent interaction patterns Done MYA-52 4d ago" [ref=e1530] [cursor=pointer]':
+                  - /url: /MYA/issues/MYA-52
+                  - generic [ref=e1531]:
+                    - generic [ref=e1532]: "Design Master Workflow Architecture: Holacracy process flows, decision trees, and agent interaction patterns"
+                    - generic [ref=e1533]:
+                      - generic "Done" [ref=e1536]
+                      - generic [ref=e1538]: MYA-52
+                  - generic [ref=e1541]: 4d ago
+                - link "Recover stalled issue MYA-47 Cancelled MYA-56 4d ago" [ref=e1543] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-56
+                  - generic [ref=e1544]:
+                    - generic [ref=e1545]: Recover stalled issue MYA-47
+                    - generic [ref=e1546]:
+                      - generic "Cancelled" [ref=e1549]
+                      - generic [ref=e1550]: MYA-56
+                  - generic [ref=e1553]: 4d ago
+                - link "Validate strategic alignment of Holacracy research findings Done MYA-51 4d ago" [ref=e1555] [cursor=pointer]:
+                  - /url: /MYA/issues/MYA-51
+                  - generic [ref=e1556]:
+                    - generic [ref=e1557]: Validate strategic alignment of Holacracy research findings
+                    - generic [ref=e1558]:
+                      - generic "Done" [ref=e1561]
+                      - generic [ref=e1563]: MYA-51
+                  - generic [ref=e1566]: 4d ago
+                - 'link "Write Feature Spec: 5 GlassFrog-inspired improvements for Paperclip Done MYA-49 4d ago" [ref=e1568] [cursor=pointer]':
+                  - /url: /MYA/issues/MYA-49
+                  - generic [ref=e1569]:
+                    - generic [ref=e1570]: "Write Feature Spec: 5 GlassFrog-inspired improvements for Paperclip"
+                    - generic [ref=e1571]:
+                      - generic "Done" [ref=e1574]
+                      - generic [ref=e1576]: MYA-49
+                  - generic [ref=e1579]: 4d ago
+  - generic [ref=e164]:
+    - heading "Command Palette" [level=2] [ref=e165]
+    - paragraph [ref=e166]: Search for a command to run...

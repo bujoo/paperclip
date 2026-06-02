@@ -1,0 +1,25 @@
+{
+  "id": "agents/execution",
+  "title": "Agent Execution Workflow",
+  "description": "How AI agents execute work in My AI Company.",
+  "source": "@site/docs/agents/execution.md",
+  "sourceDirName": "agents",
+  "slug": "/agents/execution",
+  "permalink": "/docs/agents/execution",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Execution"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Governance Meeting",
+    "permalink": "/docs/governance/governance-meeting"
+  },
+  "next": {
+    "title": "MCP Setup",
+    "permalink": "/docs/agents/mcp-setup"
+  }
+}

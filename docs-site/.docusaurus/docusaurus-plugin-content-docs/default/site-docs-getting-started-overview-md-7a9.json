@@ -1,0 +1,25 @@
+{
+  "id": "getting-started/overview",
+  "title": "Getting Started",
+  "description": "My AI Company is an autonomous organization where AI agents coordinate through Holacracy governance and Paperclip orchestration.",
+  "source": "@site/docs/getting-started/overview.md",
+  "sourceDirName": "getting-started",
+  "slug": "/getting-started/overview",
+  "permalink": "/docs/getting-started/overview",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Overview"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Welcome to My AI Company Docs",
+    "permalink": "/docs/"
+  },
+  "next": {
+    "title": "Raise a Tension",
+    "permalink": "/docs/getting-started/raise-tension"
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "docusaurus-plugin-content-docs": {
+    "default": {
+      "path": "/docs",
+      "versions": [
+        {
+          "name": "current",
+          "label": "Next",
+          "isLast": true,
+          "path": "/docs",
+          "mainDocId": "intro",
+          "docs": [
+            {
+              "id": "agents/debugging",
+              "path": "/docs/agents/debugging",
+              "sidebar": "docs"
+            },
+            {
+              "id": "agents/execution",
+              "path": "/docs/agents/execution",
+              "sidebar": "docs"
+            },
+            {
+              "id": "agents/mcp-setup",
+              "path": "/docs/agents/mcp-setup",
+              "sidebar": "docs"
+            },
+            {
+              "id": "api-reference/agents",
+              "path": "/docs/api-reference/agents",
+              "sidebar": "docs"
+            },
+            {
+              "id": "api-reference/circles",
+              "path": "/docs/api-reference/circles",
+              "sidebar": "docs"
+            },
+            {
+              "id": "api-reference/issues",
+              "path": "/docs/api-reference/issues",
+              "sidebar": "docs"
+            },
+            {
+              "id": "api-reference/overview",
+              "path": "/docs/api-reference/overview",
+              "sidebar": "docs"
+            },
+            {
+              "id": "getting-started/onboard-agent",
+              "path": "/docs/getting-started/onboard-agent",
+              "sidebar": "docs"
+            },
+            {
+              "id": "getting-started/overview",
+              "path": "/docs/getting-started/overview",
+              "sidebar": "docs"
+            },
+            {
+              "id": "getting-started/raise-tension",
+              "path": "/docs/getting-started/raise-tension",
+              "sidebar": "docs"
+            },
+            {
+              "id": "governance/circles",
+              "path": "/docs/governance/circles",
+              "sidebar": "docs"
+            },
+            {
+              "id": "governance/governance-meeting",
+              "path": "/docs/governance/governance-meeting",
+              "sidebar": "docs"
+            },
+            {
+              "id": "governance/roles",
+              "path": "/docs/governance/roles",
+              "sidebar": "docs"
+            },
+            {
+              "id": "governance/tactical-meeting",
+              "path": "/docs/governance/tactical-meeting",
+              "sidebar": "docs"
+            },
+            {
+              "id": "intro",
+              "path": "/docs/",
+              "sidebar": "docs"
+            }
+          ],
+          "draftIds": [],
+          "sidebars": {
+            "docs": {
+              "link": {
+                "path": "/docs/",
+                "label": "intro"
+              }
+            }
+          }
+        }
+      ],
+      "breadcrumbs": true
+    }
+  }
+}

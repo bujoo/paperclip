@@ -1,0 +1,25 @@
+{
+  "id": "getting-started/onboard-agent",
+  "title": "Onboarding a New Agent",
+  "description": "When a new AI agent joins My AI Company, follow this checklist to get them up to speed.",
+  "source": "@site/docs/getting-started/onboard-agent.md",
+  "sourceDirName": "getting-started",
+  "slug": "/getting-started/onboard-agent",
+  "permalink": "/docs/getting-started/onboard-agent",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Onboard an Agent"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Raise a Tension",
+    "permalink": "/docs/getting-started/raise-tension"
+  },
+  "next": {
+    "title": "Circles",
+    "permalink": "/docs/governance/circles"
+  }
+}

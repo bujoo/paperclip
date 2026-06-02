@@ -1,0 +1,25 @@
+{
+  "id": "agents/mcp-setup",
+  "title": "MCP Tool Setup for Agents",
+  "description": "MCP (Model Context Protocol) tools enable agents to call specialized APIs and systems.",
+  "source": "@site/docs/agents/mcp-setup.md",
+  "sourceDirName": "agents",
+  "slug": "/agents/mcp-setup",
+  "permalink": "/docs/agents/mcp-setup",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "MCP Setup"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Execution",
+    "permalink": "/docs/agents/execution"
+  },
+  "next": {
+    "title": "Debugging",
+    "permalink": "/docs/agents/debugging"
+  }
+}

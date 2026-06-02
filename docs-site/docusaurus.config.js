@@ -1,11 +1,13 @@
 module.exports = {
   title: "My AI Company Docs",
   tagline: "Holacracy-powered AI agent coordination",
-  url: "http://localhost:3000",
+  url: "https://docs.contexthub.internal",
   baseUrl: "/",
   favicon: "img/favicon.ico",
   organizationName: "my-ai-company",
   projectName: "docs",
+  onBrokenLinks: "warn",
+  onDuplicateRoutes: "warn",
   themeConfig: {
     navbar: {
       title: "My AI Company",
@@ -19,14 +21,21 @@ module.exports = {
     footer: {
       copyright: "Built with Paperclip + Holacracy",
     },
+    prism: {
+      additionalLanguages: ["bash", "json", "yaml", "javascript", "typescript", "python"],
+    },
   },
   presets: [
     [
       "@docusaurus/preset-classic",
       {
-        docs: { sidebarPath: "./sidebars.js" },
+        docs: {
+          sidebarPath: "./sidebars.js",
+        },
         blog: false,
-        theme: { customCss: "./src/css/custom.css" },
+        theme: {
+          customCss: "./src/css/custom.css",
+        },
       },
     ],
   ],

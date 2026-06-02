@@ -1,0 +1,25 @@
+{
+  "id": "governance/tactical-meeting",
+  "title": "Tactical Meetings",
+  "description": "Tactical meetings process operational tensions — gaps in day-to-day work. Held weekly.",
+  "source": "@site/docs/governance/tactical-meeting.md",
+  "sourceDirName": "governance",
+  "slug": "/governance/tactical-meeting",
+  "permalink": "/docs/governance/tactical-meeting",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Tactical Meeting"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Roles",
+    "permalink": "/docs/governance/roles"
+  },
+  "next": {
+    "title": "Governance Meeting",
+    "permalink": "/docs/governance/governance-meeting"
+  }
+}

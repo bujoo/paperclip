@@ -1,0 +1,75 @@
+{
+  "/docs-41a": {
+    "__comp": "5e95c892",
+    "__context": {
+      "plugin": "aba21aa0"
+    }
+  },
+  "/docs-e1e": {
+    "__comp": "a7bd4aaa",
+    "__props": "0058b4c6"
+  },
+  "/docs-379": {
+    "__comp": "a94703ab"
+  },
+  "/docs/-be8": {
+    "__comp": "17896441",
+    "content": "0e384e19"
+  },
+  "/docs/agents/debugging-197": {
+    "__comp": "17896441",
+    "content": "5639193b"
+  },
+  "/docs/agents/execution-4dc": {
+    "__comp": "17896441",
+    "content": "eabdafe9"
+  },
+  "/docs/agents/mcp-setup-5cd": {
+    "__comp": "17896441",
+    "content": "8dc31389"
+  },
+  "/docs/api-reference/agents-d7c": {
+    "__comp": "17896441",
+    "content": "be583b9b"
+  },
+  "/docs/api-reference/circles-4b4": {
+    "__comp": "17896441",
+    "content": "1a249622"
+  },
+  "/docs/api-reference/issues-810": {
+    "__comp": "17896441",
+    "content": "63c50ebb"
+  },
+  "/docs/api-reference/overview-c96": {
+    "__comp": "17896441",
+    "content": "ce830d1c"
+  },
+  "/docs/getting-started/onboard-agent-0e7": {
+    "__comp": "17896441",
+    "content": "207555dc"
+  },
+  "/docs/getting-started/overview-557": {
+    "__comp": "17896441",
+    "content": "7a96ca3d"
+  },
+  "/docs/getting-started/raise-tension-abf": {
+    "__comp": "17896441",
+    "content": "7e05ab51"
+  },
+  "/docs/governance/circles-0ea": {
+    "__comp": "17896441",
+    "content": "4170e53a"
+  },
+  "/docs/governance/governance-meeting-32f": {
+    "__comp": "17896441",
+    "content": "e7f0aa8e"
+  },
+  "/docs/governance/roles-646": {
+    "__comp": "17896441",
+    "content": "87ffddf9"
+  },
+  "/docs/governance/tactical-meeting-167": {
+    "__comp": "17896441",
+    "content": "b512bcc5"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "governance/governance-meeting",
+  "title": "Governance Meetings",
+  "description": "Governance meetings process governance tensions — proposed changes to roles, circles, policies. Held bi-weekly.",
+  "source": "@site/docs/governance/governance-meeting.md",
+  "sourceDirName": "governance",
+  "slug": "/governance/governance-meeting",
+  "permalink": "/docs/governance/governance-meeting",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Governance Meeting"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Tactical Meeting",
+    "permalink": "/docs/governance/tactical-meeting"
+  },
+  "next": {
+    "title": "Execution",
+    "permalink": "/docs/agents/execution"
+  }
+}

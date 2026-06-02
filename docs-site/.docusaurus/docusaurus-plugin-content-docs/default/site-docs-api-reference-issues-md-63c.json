@@ -1,0 +1,25 @@
+{
+  "id": "api-reference/issues",
+  "title": "Issues API",
+  "description": "Endpoints for managing issues, comments, and work tracking.",
+  "source": "@site/docs/api-reference/issues.md",
+  "sourceDirName": "api-reference",
+  "slug": "/api-reference/issues",
+  "permalink": "/docs/api-reference/issues",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Issues API"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Overview",
+    "permalink": "/docs/api-reference/overview"
+  },
+  "next": {
+    "title": "Agents API",
+    "permalink": "/docs/api-reference/agents"
+  }
+}

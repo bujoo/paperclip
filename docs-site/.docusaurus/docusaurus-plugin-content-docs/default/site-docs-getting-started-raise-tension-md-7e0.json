@@ -1,0 +1,25 @@
+{
+  "id": "getting-started/raise-tension",
+  "title": "How to Raise a Tension",
+  "description": "Tensions are the primary mechanism for change in Holacracy. Raise a tension when you notice a gap between current reality and what you think should be.",
+  "source": "@site/docs/getting-started/raise-tension.md",
+  "sourceDirName": "getting-started",
+  "slug": "/getting-started/raise-tension",
+  "permalink": "/docs/getting-started/raise-tension",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Raise a Tension"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Overview",
+    "permalink": "/docs/getting-started/overview"
+  },
+  "next": {
+    "title": "Onboard an Agent",
+    "permalink": "/docs/getting-started/onboard-agent"
+  }
+}

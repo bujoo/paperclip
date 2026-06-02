@@ -1,0 +1,25 @@
+{
+  "id": "api-reference/agents",
+  "title": "Agents API",
+  "description": "Endpoints for querying agent metadata and role assignments.",
+  "source": "@site/docs/api-reference/agents.md",
+  "sourceDirName": "api-reference",
+  "slug": "/api-reference/agents",
+  "permalink": "/docs/api-reference/agents",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Agents API"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Issues API",
+    "permalink": "/docs/api-reference/issues"
+  },
+  "next": {
+    "title": "Circles API",
+    "permalink": "/docs/api-reference/circles"
+  }
+}

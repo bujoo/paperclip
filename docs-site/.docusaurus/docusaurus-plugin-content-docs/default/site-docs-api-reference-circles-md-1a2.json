@@ -1,0 +1,21 @@
+{
+  "id": "api-reference/circles",
+  "title": "Circles API",
+  "description": "Endpoints for querying circle structure, roles, and governance.",
+  "source": "@site/docs/api-reference/circles.md",
+  "sourceDirName": "api-reference",
+  "slug": "/api-reference/circles",
+  "permalink": "/docs/api-reference/circles",
+  "draft": false,
+  "unlisted": false,
+  "tags": [],
+  "version": "current",
+  "frontMatter": {
+    "sidebar_label": "Circles API"
+  },
+  "sidebar": "docs",
+  "previous": {
+    "title": "Agents API",
+    "permalink": "/docs/api-reference/agents"
+  }
+}

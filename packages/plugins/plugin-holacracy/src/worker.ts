@@ -3145,8 +3145,19 @@ async function createDiscussion(
     }
   }
 
+  // Phase 1.15h-l F11 — SMART discussions are owned by the IDM advancer
+  // (advanceIdmPhase walks open → proposal → clarifying_questions → ...).
+  // The legacy round-1 spawn here would race the IDM `idm-proposal` turn
+  // and assign work to ALL participants instead of just the proposer,
+  // producing duplicate / wasted Bedrock spawns. Skip the legacy spawn
+  // for SMART; the F3 advancer's `open → proposal` transition (firing on
+  // the next cron tick) will spawn the correct single-proposer turn.
   let issueIds: string[];
-  if (speakerMode === "parallel") {
+  const isSmart =
+    typeof successCriterion === "string" && successCriterion.trim().length > 0;
+  if (isSmart) {
+    issueIds = [];
+  } else if (speakerMode === "parallel") {
     issueIds = await spawnRoundTurnIssues({ discussion, roundNumber: 1, digest: null });
   } else {
     // Sequential — spawn just the first speaker.

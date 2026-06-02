@@ -3890,6 +3890,79 @@ async function advanceIdmPhase(discussion: CircleDiscussionRow): Promise<boolean
  * `idmAdvance`, and Facilitator agents resolve via the existing
  * `holacracy-idm-validate-objection` + `holacracy-idm-integrate` tools.
  */
+/**
+ * F4 — Robertson's 3 objection-validity tests applied as a deterministic
+ * heuristic at seed time, so the Facilitator has a starting point and `is_valid`
+ * isn't left null forever.
+ *
+ * Robertson (Holacracy ch.4 + GTD §4.4): an objection is valid only if ALL three:
+ *   1. The proposal would CAUSE NEW HARM (not current-state harm — that's a
+ *      separate tension)
+ *   2. The harm FOLLOWS FROM THE PROPOSAL TEXT (not speculation about how it
+ *      will be applied)
+ *   3. The harm is based on CURRENT KNOWLEDGE or near-term forecast (not
+ *      hypothetical "what if in 5 years")
+ *
+ * The Facilitator agent may override any of these via
+ * `holacracy-idm-validate-objection` — this heuristic just gives the IDM
+ * machinery a starting verdict instead of stalling at null.
+ */
+function computeObjectionValidityHeuristic(
+  objectionBody: string,
+  proposalContent: unknown,
+): {
+  test_unworkable: { result: boolean | null; rationale: string };
+  test_follows_from_proposal: { result: boolean | null; rationale: string };
+  test_current_not_speculation: { result: boolean | null; rationale: string };
+} {
+  const body = (objectionBody ?? "").toLowerCase();
+  if (body.trim().length === 0) {
+    const empty = { result: null, rationale: "objection body is empty" } as const;
+    return { test_unworkable: empty, test_follows_from_proposal: empty, test_current_not_speculation: empty };
+  }
+
+  // (1) NEW HARM — look for harm/breakage language
+  const harmTerms = ["harm", "broke", "break", "fail", "blocks", "block ", "damages", "damage", "loses", "lose", "loss", "regression", "regress", "won't work", "wont work", "doesn't work", "doesnt work", "cannot work"];
+  const mentionsHarm = harmTerms.some((t) => body.includes(t));
+  const test_unworkable = mentionsHarm
+    ? { result: true, rationale: "objection body identifies concrete harm/breakage" }
+    : { result: false, rationale: "no harm-language in objection body (no break/fail/block/damage); may be a tension, not an objection" };
+
+  // (2) FOLLOWS FROM PROPOSAL TEXT — naive lexical overlap with proposal
+  const proposalText = typeof proposalContent === "string"
+    ? proposalContent
+    : (() => { try { return JSON.stringify(proposalContent); } catch { return ""; } })();
+  const proposalWords = new Set(
+    proposalText.toLowerCase().match(/\b[a-z]{4,}\b/g)?.filter((w) => !STOPWORDS.has(w)) ?? [],
+  );
+  const objectionWords = body.match(/\b[a-z]{4,}\b/g)?.filter((w) => !STOPWORDS.has(w)) ?? [];
+  let overlap = 0;
+  for (const w of objectionWords) if (proposalWords.has(w)) overlap++;
+  const followsFromProposal = overlap >= 2;
+  const test_follows_from_proposal = followsFromProposal
+    ? { result: true, rationale: `objection references proposal text (${overlap} content-word overlap)` }
+    : { result: false, rationale: `objection has <2 content-word overlap with proposal; may be tangential rather than following from proposal text` };
+
+  // (3) CURRENT NOT SPECULATION — look for speculation markers
+  const speculationMarkers = [
+    "what if", "could happen", "might happen", "may happen", "in the future", "years from now",
+    "5 years", "10 years", "hypothetically", "speculative", "imagine if", "someday",
+  ];
+  const isSpeculation = speculationMarkers.some((m) => body.includes(m));
+  const test_current_not_speculation = isSpeculation
+    ? { result: false, rationale: `objection contains speculation marker; Robertson invalidates hypothetical concerns` }
+    : { result: true, rationale: "no speculation markers detected; grounded in current/near-term" };
+
+  return { test_unworkable, test_follows_from_proposal, test_current_not_speculation };
+}
+
+const STOPWORDS = new Set([
+  "this", "that", "these", "those", "with", "from", "have", "will", "would", "could", "should",
+  "what", "when", "where", "which", "their", "there", "about", "they", "them", "your", "yours",
+  "into", "than", "then", "such", "some", "more", "most", "other", "only", "also", "been",
+  "being", "were", "because", "while", "shall", "must", "does", "doing", "having",
+]);
+
 async function bridgeDiscussionToIdm(
   discussion: CircleDiscussionRow,
 ): Promise<{ idmApprovalId: string; objectionCount: number } | null> {
@@ -3978,10 +4051,37 @@ async function bridgeDiscussionToIdm(
     const body = (o.reason ?? "").trim().length > 0
       ? (o.reason as string)
       : `[bridged from discussion ${discussion.id.slice(0, 8)}] signal=${o.signal} (no reason given)`;
+    // F4 — Robertson's 3 objection-validity tests, applied as a fast heuristic
+    // at seed time. The Facilitator agent can override these via
+    // holacracy-idm-validate-objection; without that, this gives V3 a real
+    // pass-fail signal instead of leaving the fields null forever.
+    const tests = computeObjectionValidityHeuristic(body, proposalContent);
+    const allPass = tests.test_unworkable.result === true
+      && tests.test_follows_from_proposal.result === true
+      && tests.test_current_not_speculation.result === true;
+    const anyFail = tests.test_unworkable.result === false
+      || tests.test_follows_from_proposal.result === false
+      || tests.test_current_not_speculation.result === false;
+    const isValid: boolean | null = allPass ? true : anyFail ? false : null;
     try {
       await dbCtx.execute(
-        `INSERT INTO ${tbl("idm_objections")} (id, idm_id, raised_by_agent_id, raised_by_role_id, body) VALUES ($1, $2, $3, $4, $5)`,
-        [randomUUID(), proposed.idm.id, o.agent_id, roleId, body],
+        `INSERT INTO ${tbl("idm_objections")} (
+            id, idm_id, raised_by_agent_id, raised_by_role_id, body,
+            test_unworkable, test_follows_from_proposal, test_current_not_speculation,
+            is_valid, validated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10)`,
+        [
+          randomUUID(),
+          proposed.idm.id,
+          o.agent_id,
+          roleId,
+          body,
+          JSON.stringify(tests.test_unworkable),
+          JSON.stringify(tests.test_follows_from_proposal),
+          JSON.stringify(tests.test_current_not_speculation),
+          isValid,
+          isValid !== null ? new Date().toISOString() : null,
+        ],
       );
       objectionCount += 1;
     } catch (err) {
@@ -4860,6 +4960,29 @@ async function runStewardHealer(): Promise<StewardCounters> {
       }
 
       // No ratifier set — fall back to legacy auto-deadlock.
+      // F6 — bridge to IDM before concluding so any support-with-objection /
+      // block signals from agents don't get silently dropped. bridge is
+      // idempotent + returns null if no objectors, so this is safe to call.
+      try {
+        const rows = await dbCtx.query<CircleDiscussionRow>(
+          `SELECT * FROM public.circle_discussions WHERE id = $1`,
+          [d.id],
+        );
+        if (rows[0]) {
+          const bridge = await bridgeDiscussionToIdm(rows[0]);
+          if (bridge) {
+            console.log(
+              `[holacracy] F6 — Steward bridged auto-concluded discussion ${d.id.slice(0, 8)} → IDM ${bridge.idmApprovalId.slice(0, 8)} (${bridge.objectionCount} objection(s))`,
+            );
+          }
+        }
+      } catch (err) {
+        console.warn(
+          "[holacracy] F6 — Steward → IDM bridge failed for stalled discussion",
+          d.id.slice(0, 8),
+          err instanceof Error ? err.message : String(err),
+        );
+      }
       await dbCtx.execute(
         `UPDATE public.circle_discussions
             SET phase = 'concluded',
@@ -4923,6 +5046,27 @@ async function runStewardHealer(): Promise<StewardCounters> {
     for (const d of stale) {
       const marker = `[STEWARD:stale-commit:${d.id}:${today}]`;
       if (await stewardAlreadyActed(marker)) continue;
+      // F6 — bridge to IDM before concluding (idempotent; null if no objectors).
+      try {
+        const rows = await dbCtx.query<CircleDiscussionRow>(
+          `SELECT * FROM public.circle_discussions WHERE id = $1`,
+          [d.id],
+        );
+        if (rows[0]) {
+          const bridge = await bridgeDiscussionToIdm(rows[0]);
+          if (bridge) {
+            console.log(
+              `[holacracy] F6 — Steward bridged stale-commit discussion ${d.id.slice(0, 8)} → IDM ${bridge.idmApprovalId.slice(0, 8)} (${bridge.objectionCount} objection(s))`,
+            );
+          }
+        }
+      } catch (err) {
+        console.warn(
+          "[holacracy] F6 — Steward → IDM bridge failed for stale-commit discussion",
+          d.id.slice(0, 8),
+          err instanceof Error ? err.message : String(err),
+        );
+      }
       await dbCtx.execute(
         `UPDATE public.circle_discussions
             SET phase = 'concluded',

@@ -26,6 +26,7 @@ import { sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { logger } from "../middleware/logger.js";
 import { getCompanyDna, type DnaEnvelope } from "../services/company-dna.js";
+import { coerceRowsList } from "../util/db.js";
 
 const MAX_NEIGHBOURS = 20;
 const MAX_PERCEPTIONS = 20;
@@ -178,7 +179,7 @@ async function loadAgentCompanyId(db: Db, agentId: string): Promise<string | nul
       WHERE id = ${agentId}::uuid
       LIMIT 1
     `);
-    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: AgentRow[] }).rows ?? [];
+    const list = coerceRowsList<AgentRow>(rows);
     return list[0]?.companyId ?? null;
   } catch (err) {
     logger.debug({ err, agentId }, "neighbourhood: agent company lookup failed");
@@ -227,7 +228,7 @@ async function loadNeighbours(db: Db, agentId: string): Promise<NeighbourEntry[]
       ORDER BY "name" ASC
       LIMIT ${MAX_NEIGHBOURS}
     `);
-    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    const list = coerceRowsList<Row>(rows);
     return list.map((r): NeighbourEntry => ({
       id: r.id,
       name: r.name,
@@ -270,7 +271,7 @@ async function loadRecentPulses(db: Db, agentId: string): Promise<RecentPulseEnt
       ORDER BY received_at DESC
       LIMIT ${MAX_RECENT_PULSES}
     `);
-    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    const list = coerceRowsList<Row>(rows);
     return list.map((r): RecentPulseEntry => ({
       topic: r.topic,
       payloadJson: r.payloadJson,
@@ -315,7 +316,7 @@ async function consumePerceptions(db: Db, agentId: string): Promise<PerceptionEn
         p.user_properties   AS "userProperties",
         p.received_at::text AS "receivedAt"
     `);
-    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    const list = coerceRowsList<Row>(rows);
     return list.map((r): PerceptionEntry => ({
       id: r.id,
       topic: r.topic,
@@ -383,7 +384,7 @@ async function loadActiveDiscussions(
       ORDER BY d.started_at DESC
       LIMIT ${MAX_ACTIVE_DISCUSSIONS}
     `);
-    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    const list = coerceRowsList<Row>(rows);
     return list.map((r): ActiveDiscussionEntry => {
       const order = Array.isArray(r.speakerOrder) && r.speakerOrder.length > 0
         ? r.speakerOrder
@@ -440,7 +441,7 @@ async function loadTrustSignals(db: Db, agentId: string): Promise<TrustSignalEnt
       ORDER BY t.last_exchange_at DESC NULLS LAST
       LIMIT ${MAX_TRUST_SIGNALS}
     `);
-    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    const list = coerceRowsList<Row>(rows);
     return list.map((r): TrustSignalEntry => ({
       trustedAgentId: r.trustedAgentId,
       trustedAgentName: r.trustedAgentName,
@@ -487,7 +488,7 @@ async function loadMyRoles(db: Db, agentId: string): Promise<MyRoleEntry[]> {
       ORDER BY ra.assigned_at DESC
       LIMIT ${MAX_MY_ROLES}
     `);
-    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    const list = coerceRowsList<Row>(rows);
     return list.map((r): MyRoleEntry => ({
       roleId: r.roleId,
       roleName: r.roleName,
@@ -554,7 +555,7 @@ async function loadCircleStrategies(db: Db, agentId: string): Promise<StrategyEn
       WHERE ranked.rn <= ${MAX_STRATEGIES_PER_CIRCLE}
       ORDER BY ranked.created_at DESC
     `);
-    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    const list = coerceRowsList<Row>(rows);
     return list.map((r): StrategyEntry => ({
       id: r.id,
       circleId: r.circleId,
@@ -620,7 +621,7 @@ async function loadCircleMetrics(db: Db, agentId: string): Promise<MetricEntry[]
       ORDER BY latest.period_date DESC NULLS LAST
       LIMIT ${MAX_METRICS}
     `);
-    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    const list = coerceRowsList<Row>(rows);
     return list.map((r): MetricEntry => {
       const latestNum = toNumOrNull(r.latestValue);
       const priorNum = toNumOrNull(r.priorValue);
@@ -695,7 +696,7 @@ async function loadCircleChecklists(db: Db, agentId: string): Promise<ChecklistE
       ORDER BY lp.period_date DESC NULLS LAST
       LIMIT ${MAX_CHECKLISTS}
     `);
-    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    const list = coerceRowsList<Row>(rows);
     return list.map((r): ChecklistEntry => ({
       checklistId: r.checklistId,
       itemText: r.itemText,

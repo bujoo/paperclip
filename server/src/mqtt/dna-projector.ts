@@ -29,6 +29,7 @@ import type { PluginEvent } from "@paperclipai/plugin-sdk";
 import { sql } from "drizzle-orm";
 import { dnaTopic } from "@paperclipai/adapter-a2a-mqtt/server";
 import { logger } from "../middleware/logger.js";
+import { coerceRowsList } from "../util/db.js";
 import {
   isMqttInitialised,
   publishRetainedMessage,
@@ -58,9 +59,7 @@ export async function initDnaProjector(db: Db): Promise<void> {
     const rows = await db.execute<{ companyId: string }>(sql`
       SELECT id::text AS "companyId" FROM public.companies WHERE status != 'archived'
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ companyId: string }> }).rows ?? [];
+    const list = coerceRowsList<{ companyId: string }>(rows);
     for (const row of list) {
       try {
         await projectDna(row.companyId, db);

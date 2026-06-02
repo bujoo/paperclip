@@ -45,6 +45,7 @@ import {
 import { invalidateAclCache } from "./acl-backend.js";
 import { reconcileAgentRuntimeSubscriptions } from "./agent-runtime-bridge.js";
 import * as perAgentClientManager from "./per-agent-client-manager.js";
+import { coerceRowsList } from "../util/db.js";
 
 // ---------------------------------------------------------------------------
 // Card schema (A2A v1.0 + paperclip extension)
@@ -255,8 +256,8 @@ async function loadAgentById(agentId: string): Promise<AgentRow | null> {
     WHERE id = ${agentId}::uuid
     LIMIT 1
   `);
-  const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: AgentRow[] }).rows ?? [];
-  return (list[0] as AgentRow) ?? null;
+  const list = coerceRowsList<AgentRow>(rows);
+  return list[0] ?? null;
 }
 
 /**
@@ -279,8 +280,7 @@ async function loadRoleAssignmentsForAgent(agentId: string): Promise<CircleRoleR
       JOIN plugin_holacracy_c5049b5dfe.circles c ON c.id = r.circle_id
       WHERE ra.agent_id = ${agentId}::uuid
     `);
-    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: CircleRoleRow[] }).rows ?? [];
-    return list as CircleRoleRow[];
+    return coerceRowsList<CircleRoleRow>(rows);
   } catch (err) {
     // Schema not yet installed — that's the common case before plugin is loaded.
     logger.debug(

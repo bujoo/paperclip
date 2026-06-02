@@ -19,6 +19,7 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { logActivity } from "./activity-log.js";
+import { coerceRowsList } from "../util/db.js";
 
 // ---------------------------------------------------------------------------
 // Envelope schema
@@ -99,9 +100,7 @@ async function loadCompanyRow(db: Db, companyId: string): Promise<CompanyRow | n
       WHERE id = ${companyId}::uuid
       LIMIT 1
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: CompanyRow[] }).rows ?? [];
+    const list = coerceRowsList<CompanyRow>(rows);
     return list[0] ?? null;
   } catch {
     return null;
@@ -124,9 +123,7 @@ async function loadCompanyPolicies(db: Db, companyId: string): Promise<DnaPolicy
       JOIN plugin_holacracy_c5049b5dfe.circles c ON c.id = p.circle_id
       WHERE c.company_id = ${companyId}::uuid AND c.parent_circle_id IS NULL
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Row[] }).rows ?? [];
+    const list = coerceRowsList<Row>(rows);
     return list.map((r): DnaPolicy => ({ id: r.id, title: r.title, scope: r.scope, text: r.text }));
   } catch {
     return [];
@@ -151,9 +148,7 @@ async function loadActiveAgreements(db: Db, companyId: string): Promise<DnaAgree
       FROM plugin_holacracy_c5049b5dfe.agreements a
       WHERE a.company_id = ${companyId}::uuid AND a.status = 'active'
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Row[] }).rows ?? [];
+    const list = coerceRowsList<Row>(rows);
     return list.map((row): DnaAgreement => ({
       id: row.id,
       parties: Array.isArray(row.partiesRaw)
@@ -177,9 +172,7 @@ async function loadDomainRegistry(db: Db, companyId: string): Promise<{
       SELECT d.* FROM plugin_holacracy_c5049b5dfe.domain_registry d
       WHERE d.company_id = ${companyId}::uuid
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<Record<string, unknown>> }).rows ?? [];
+    const list = coerceRowsList<Record<string, unknown>>(rows);
     return { domains: list, conflicts: [] };
   } catch {
     return { domains: [], conflicts: [] };
@@ -193,9 +186,7 @@ async function loadHeuristicWeightsVersion(db: Db, companyId: string): Promise<n
       FROM plugin_holacracy_c5049b5dfe.heuristic_weights
       WHERE company_id = ${companyId}::uuid
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ version: number }> }).rows ?? [];
+    const list = coerceRowsList<{ version: number }>(rows);
     return list[0]?.version ?? null;
   } catch {
     return null;
@@ -210,9 +201,7 @@ async function loadAnchorCircleId(db: Db, companyId: string): Promise<string | n
       WHERE company_id = ${companyId}::uuid AND parent_id IS NULL
       LIMIT 1
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ id: string }> }).rows ?? [];
+    const list = coerceRowsList<{ id: string }>(rows);
     return list[0]?.id ?? null;
   } catch {
     return null;

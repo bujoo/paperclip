@@ -31,6 +31,7 @@ import {
 } from "@paperclipai/adapter-a2a-mqtt/server";
 import type { PluginEvent } from "@paperclipai/plugin-sdk";
 import { logger } from "../middleware/logger.js";
+import { coerceRowsList } from "../util/db.js";
 import {
   isMqttInitialised,
   publish,
@@ -207,9 +208,7 @@ async function aggregateCompanies(db: Db): Promise<CompanyAggregates[]> {
       WHERE status NOT IN ('terminated', 'paused', 'pending_approval')
       GROUP BY company_id
     `);
-    agentRows = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: typeof agentRows }).rows ?? [];
+    agentRows = coerceRowsList<{ companyId: string; activeAgentCount: number }>(rows);
   } catch (err) {
     logger.debug({ err }, "heartbeat-bridge: active-agent aggregate failed");
   }
@@ -223,9 +222,7 @@ async function aggregateCompanies(db: Db): Promise<CompanyAggregates[]> {
       WHERE origin_kind = 'harness_liveness_escalation' AND status NOT IN ('done', 'closed', 'archived')
       GROUP BY company_id
     `);
-    escalationRows = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: typeof escalationRows }).rows ?? [];
+    escalationRows = coerceRowsList<{ companyId: string; openEscalations: number }>(rows);
   } catch (err) {
     logger.debug({ err }, "heartbeat-bridge: escalation aggregate failed");
   }
@@ -246,9 +243,7 @@ async function aggregateCompanies(db: Db): Promise<CompanyAggregates[]> {
       FROM plugin_holacracy_c5049b5dfe.tactical_records
       GROUP BY company_id, circle_id, cadence
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ companyId: string; circleId: string; cadence: string; recordedAt: string }> }).rows ?? [];
+    const list = coerceRowsList<{ companyId: string; circleId: string; cadence: string; recordedAt: string }>(rows);
     for (const row of list) {
       const bucket = row.cadence === "governance" ? governanceByCompany : tacticalByCompany;
       const entry = bucket.get(row.companyId) ?? {};
@@ -270,9 +265,7 @@ async function aggregateCompanies(db: Db): Promise<CompanyAggregates[]> {
       FROM plugin_holacracy_c5049b5dfe.idm_approvals
       GROUP BY company_id
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ companyId: string; lastAdvance: string }> }).rows ?? [];
+    const list = coerceRowsList<{ companyId: string; lastAdvance: string }>(rows);
     for (const row of list) {
       idmLastByCompany.set(row.companyId, row.lastAdvance);
     }
@@ -293,9 +286,7 @@ async function aggregateCompanies(db: Db): Promise<CompanyAggregates[]> {
     const rows = await db.execute<{ companyId: string }>(sql`
       SELECT id::text AS "companyId" FROM public.companies WHERE status != 'archived'
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ companyId: string }> }).rows ?? [];
+    const list = coerceRowsList<{ companyId: string }>(rows);
     for (const row of list) companyIds.add(row.companyId);
   } catch (err) {
     logger.debug({ err }, "heartbeat-bridge: company enumeration failed");

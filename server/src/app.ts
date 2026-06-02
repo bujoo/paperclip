@@ -47,6 +47,7 @@ import { requireMqttInternalAuth } from "./mqtt/internal-auth.js";
 import { backfillAgentCardsOnBootstrap } from "./mqtt/agent-card-projector.js";
 import { getHostSingletonDiagnostics, isMqttInitialised } from "./mqtt/client.js";
 import * as perAgentClientManager from "./mqtt/per-agent-client-manager.js";
+import { coerceRowsList } from "./util/db.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
@@ -325,10 +326,10 @@ export async function createApp(
   api.post("/internal/mqtt/recycle-agents", async (_req, res) => {
     try {
       const { sql } = await import("drizzle-orm");
-      const rows = (await db.execute<{ id: string }>(
+      const rows = await db.execute<{ id: string }>(
         sql`SELECT id::text AS "id" FROM public.agents WHERE status NOT IN ('archived','terminated')`,
-      )) as unknown as { rows: Array<{ id: string }> } | Array<{ id: string }>;
-      const list = Array.isArray(rows) ? rows : rows.rows ?? [];
+      );
+      const list = coerceRowsList<{ id: string }>(rows);
       let recycled = 0;
       for (const row of list) {
         try {

@@ -40,6 +40,7 @@ import {
   type PublishEventOptions,
 } from "@paperclipai/adapter-a2a-mqtt/server";
 import { logger } from "../middleware/logger.js";
+import { coerceRowsList } from "../util/db.js";
 import { isMqttInitialised } from "./client.js";
 import { computeAgentMqttPassword } from "./auth-backend.js";
 import {
@@ -138,9 +139,7 @@ async function loadHomeSlot(db: Db, agentId: string): Promise<AgentSlot | null> 
       ORDER BY ra.assigned_at DESC NULLS LAST
       LIMIT 1
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ companyId: string; circleId: string }> }).rows ?? [];
+    const list = coerceRowsList<{ companyId: string; circleId: string }>(rows);
     if (list[0]) {
       return {
         companyId: list[0].companyId,
@@ -662,9 +661,7 @@ export async function initPerAgentClientManager(db: Db): Promise<void> {
       FROM public.agents
       WHERE status NOT IN ('archived', 'terminated')
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ id: string }> }).rows ?? [];
+    const list = coerceRowsList<{ id: string }>(rows);
     agentIds = list.map((r) => r.id);
   } catch (err) {
     logger.warn({ err }, "per-agent-client-manager: bootstrap agent load failed");

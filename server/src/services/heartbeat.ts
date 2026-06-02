@@ -40,6 +40,7 @@ import {
 } from "@paperclipai/db";
 import { conflict, HttpError, notFound } from "../errors.js";
 import { logger } from "../middleware/logger.js";
+import { coerceRowsList } from "../util/db.js";
 import { publishLiveEvent } from "./live-events.js";
 import { getRunLogStore, type RunLogHandle } from "./run-log-store.js";
 import { getServerAdapter, listAdapterModelProfiles, runningProcesses } from "../adapters/index.js";
@@ -5785,6 +5786,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                     speaker_order: unknown;
                     current_speaker_idx: number | null;
                     phase: string | null;
+                    // F7 — proposer identity (who initiated the discussion).
+                    initiated_by_agent_id: string | null;
                     // Phase 1.15h-i #2 — Grove pre-flight (HOM ch. 5).
                     decision_owner_agent_id: string | null;
                     consulted_agent_ids: unknown;
@@ -5805,6 +5808,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                            d.speaker_order,
                            d.current_speaker_idx,
                            d.phase,
+                           d.initiated_by_agent_id::text AS initiated_by_agent_id,
                            d.decision_owner_agent_id::text AS decision_owner_agent_id,
                            d.consulted_agent_ids,
                            d.ratifier_agent_id::text AS ratifier_agent_id,
@@ -5917,6 +5921,16 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                     const currentSpeakerId = speakerOrder[idx];
                     runtimeConfig.isCurrentSpeaker =
                       typeof currentSpeakerId === "string" && currentSpeakerId === agent.id;
+
+                    // F7 — surface proposer identity so the proposer's prompt
+                    // variant (proposerBlock) overrides their structural role
+                    // block in the dispatcher. Using initiated_by_agent_id as
+                    // the source of truth (sufficient for the current org;
+                    // a dedicated proposer_agent_id column would be needed if
+                    // the proposer ever transfers mid-discussion).
+                    runtimeConfig.isProposer =
+                      typeof smart.initiated_by_agent_id === "string"
+                      && smart.initiated_by_agent_id === agent.id;
 
                     // Resolve this agent's role_type within the discussion's
                     // circle. Lives in plugin-holacracy's namespace — mirror
@@ -8324,15 +8338,15 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           agentId: string;
           topic: string;
         }
-        const rows = (await db.execute<Row>(sql`
+        const rows = await db.execute<Row>(sql`
           SELECT id::text AS "id", agent_id::text AS "agentId", topic
             FROM public.agent_perceptions
            WHERE wake_eligible = true
              AND wake_processed_at IS NULL
            ORDER BY received_at ASC
            LIMIT 100
-        `)) as unknown as { rows: Row[] } | Row[];
-        const list: Row[] = Array.isArray(rows) ? rows : rows.rows ?? [];
+        `);
+        const list = coerceRowsList<Row>(rows);
         const perAgentRecentCount = new Map<string, number>();
         for (const row of list) {
           checked += 1;

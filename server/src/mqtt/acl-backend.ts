@@ -61,6 +61,7 @@ import type { Db } from "@paperclipai/db";
 import { slugify } from "@paperclipai/adapter-a2a-mqtt/server";
 import { HOST_MQTT_USERNAME } from "./client.js";
 import { logger } from "../middleware/logger.js";
+import { coerceRowsList } from "../util/db.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ACL_CACHE_TTL_MS = 600 * 1000; // 10 minutes
@@ -161,9 +162,7 @@ async function loadAclProfile(
       WHERE ra.agent_id = ${agentId}::uuid
         AND c.company_id = ${companyId}::uuid
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ circleId: string; roleId: string }> }).rows ?? [];
+    const list = coerceRowsList<{ circleId: string; roleId: string }>(rows);
     const circleSet = new Set<string>();
     const roleSet = new Set<string>();
     for (const row of list) {
@@ -187,9 +186,7 @@ async function loadAclProfile(
           OR cl.target_circle_id = ANY(${ownCircleIds}::uuid[])
         )
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ crossLinkId: string }> }).rows ?? [];
+    const list = coerceRowsList<{ crossLinkId: string }>(rows);
     crossLinkIds = list.map((row) => row.crossLinkId);
   } catch {
     // cross_links table not in schema — that's fine, leave empty.
@@ -206,9 +203,7 @@ async function loadAclProfile(
         AND company_id = ${companyId}::uuid
       LIMIT 1
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ accountabilities: Array<Record<string, unknown>> | null }> }).rows ?? [];
+    const list = coerceRowsList<{ accountabilities: Array<Record<string, unknown>> | null }>(rows);
     const accountabilities = list[0]?.accountabilities ?? [];
     const slugs = new Set<string>();
     if (Array.isArray(accountabilities)) {
@@ -236,9 +231,7 @@ async function loadAclProfile(
       WHERE status = 'open'
         AND ${agentId}::uuid = ANY(participant_agent_ids)
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<{ contextId: string }> }).rows ?? [];
+    const list = coerceRowsList<{ contextId: string }>(rows);
     ownDiscussionContextIds = list.map((row) => row.contextId);
   } catch (err) {
     logger.debug({ err, agentId }, "mqtt-acl: discussion context load failed");

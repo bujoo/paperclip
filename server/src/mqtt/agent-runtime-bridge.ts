@@ -39,6 +39,7 @@ import {
   type SubscribeMessage,
 } from "@paperclipai/adapter-a2a-mqtt/server";
 import { logger } from "../middleware/logger.js";
+import { coerceRowsList } from "../util/db.js";
 import {
   getClient,
   isMqttInitialised,
@@ -91,10 +92,7 @@ async function loadAllAgentSlots(db: Db): Promise<AgentSlotRow[]> {
       JOIN plugin_holacracy_c5049b5dfe.role_assignments ra ON ra.agent_id = a.id
       WHERE a.status NOT IN ('terminated', 'archived')
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: AgentSlotRow[] }).rows ?? [];
-    return list as AgentSlotRow[];
+    return coerceRowsList<AgentSlotRow>(rows);
   } catch (err) {
     logger.debug(
       { err },
@@ -111,10 +109,7 @@ async function loadAllAgentSkills(db: Db): Promise<AgentSkillRow[]> {
       FROM public.agents
       WHERE status != 'archived'
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: AgentSkillRow[] }).rows ?? [];
-    return list as AgentSkillRow[];
+    return coerceRowsList<AgentSkillRow>(rows);
   } catch (err) {
     logger.debug({ err }, "agent-runtime-bridge: bulk agent load failed");
     return [];
@@ -334,9 +329,7 @@ async function loadIssueRow(db: Db, issueId: string): Promise<IssueRow | null> {
     WHERE id = ${issueId}::uuid
     LIMIT 1
   `);
-  const list = Array.isArray(rows)
-    ? rows
-    : (rows as unknown as { rows: IssueRow[] }).rows ?? [];
+  const list = coerceRowsList<IssueRow>(rows);
   return list[0] ?? null;
 }
 
@@ -449,9 +442,7 @@ export async function resolveA2AOriginIssueTopicTuple(
       ORDER BY r.circle_id NULLS LAST
       LIMIT 1
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: Array<Record<string, string | null>> }).rows ?? [];
+    const list = coerceRowsList<Record<string, string | null>>(rows);
     const row = list[0];
     if (!row) return null;
     if (row.originKind !== "a2a:request") return null;

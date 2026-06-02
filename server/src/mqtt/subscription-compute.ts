@@ -26,6 +26,7 @@ import {
   slugify,
 } from "@paperclipai/adapter-a2a-mqtt/server";
 import { logger } from "../middleware/logger.js";
+import { coerceRowsList } from "../util/db.js";
 
 export interface AgentSlot {
   companyId: string;
@@ -67,10 +68,7 @@ async function loadSlotsForAgent(db: Db, agentId: string): Promise<AgentSlotRow[
       WHERE a.id = ${agentId}::uuid
         AND a.status NOT IN ('terminated', 'archived')
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: AgentSlotRow[] }).rows ?? [];
-    return list as AgentSlotRow[];
+    return coerceRowsList<AgentSlotRow>(rows);
   } catch (err) {
     logger.debug({ err, agentId }, "subscription-compute: per-agent slot lookup failed");
     return [];
@@ -98,10 +96,7 @@ async function loadAgentDiscussionTopics(db: Db, agentId: string): Promise<Discu
         AND ${agentId}::uuid = ANY(participant_agent_ids)
       LIMIT 50
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: DiscussionTopicRow[] }).rows ?? [];
-    return list;
+    return coerceRowsList<DiscussionTopicRow>(rows);
   } catch (err) {
     logger.debug({ err, agentId }, "subscription-compute: discussion topic lookup failed");
     return [];
@@ -120,10 +115,8 @@ async function loadAgentSkills(db: Db, agentId: string): Promise<AgentSkillRow |
         AND status != 'archived'
       LIMIT 1
     `);
-    const list = Array.isArray(rows)
-      ? rows
-      : (rows as unknown as { rows: AgentSkillRow[] }).rows ?? [];
-    return (list[0] as AgentSkillRow) ?? null;
+    const list = coerceRowsList<AgentSkillRow>(rows);
+    return list[0] ?? null;
   } catch (err) {
     logger.debug({ err, agentId }, "subscription-compute: skill lookup failed");
     return null;

@@ -34,6 +34,7 @@ import type { Db } from "@paperclipai/db";
 import { a2aPendingReplies, agentPerceptions } from "@paperclipai/db";
 import type { SubscribeMessage } from "@paperclipai/adapter-a2a-mqtt/server";
 import { logger } from "../middleware/logger.js";
+import { coerceRowsList } from "../util/db.js";
 import { issueService } from "../services/issues.js";
 import { logActivity } from "../services/activity-log.js";
 import type { AgentSlot } from "./subscription-compute.js";
@@ -518,7 +519,7 @@ async function resolveLeadLinks(
   db: Db,
   companyId: string,
 ): Promise<RecipientRow[]> {
-  const rows = (await db.execute<RecipientRow>(sql`
+  const rows = await db.execute<RecipientRow>(sql`
     SELECT
       a.id::text          AS "agentId",
       a.name              AS "agentName",
@@ -533,8 +534,8 @@ async function resolveLeadLinks(
       AND a.status NOT IN ('archived','terminated')
       AND r.role_type = 'circle_lead'
     ORDER BY c.name, a.name
-  `)) as unknown as { rows: RecipientRow[] } | RecipientRow[];
-  return Array.isArray(rows) ? rows : rows.rows ?? [];
+  `);
+  return coerceRowsList<RecipientRow>(rows);
 }
 
 /**

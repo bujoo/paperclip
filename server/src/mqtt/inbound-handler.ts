@@ -108,8 +108,19 @@ export type InboundTopicClass = "request" | "broadcast" | "ignored";
  *   paperclip/v1/idm/{...}, /crosslink/ (handled by dedicated topics)
  */
 export function classifyInboundTopic(topic: string): InboundTopicClass {
-  if (!topic.startsWith("paperclip/v1/")) return "ignored";
-  const rest = topic.slice("paperclip/v1/".length);
+  // Phase 1.16-EMQX E1 — Accept both `$a2a/v1/` (A2A-spec topics indexed
+  // by the EMQX A2A Registry: discovery/request/reply/event/pool) and
+  // `paperclip/v1/` (Paperclip-specific transport: heartbeat/dna/idm/
+  // discussion/role/skill/crosslink). Strip whichever prefix is present
+  // before dispatching on the channel name.
+  let rest: string;
+  if (topic.startsWith("$a2a/v1/")) {
+    rest = topic.slice("$a2a/v1/".length);
+  } else if (topic.startsWith("paperclip/v1/")) {
+    rest = topic.slice("paperclip/v1/".length);
+  } else {
+    return "ignored";
+  }
   const head = rest.split("/", 1)[0];
   switch (head) {
     case "request":

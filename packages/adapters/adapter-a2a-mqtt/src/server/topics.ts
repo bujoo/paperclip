@@ -1,21 +1,46 @@
 /**
  * A2A-over-MQTT topic format constants and builders.
  *
- * The canonical Paperclip A2A topic namespace. All topics live under
- * `paperclip/v1/...`. The companyId/circleId/agentId components are UUIDs
- * (validated broker-side in production via an EMQX topic-validator hook).
+ * Two prefixes (Phase 1.16-EMQX E1):
+ *
+ * 1. **`$a2a/v1/...`** — the 5 dimensions defined by the EMQX A2A spec +
+ *    Google's open A2A protocol (discovery, request, reply, event, pool).
+ *    EMQX's A2A Registry auto-indexes Agent Cards published to
+ *    `$a2a/v1/discovery/+/+/+`, tracks per-agent liveness via LWT, and
+ *    routes interop with any A2A-compliant client (python-a2a,
+ *    @a2aproject/a2a, etc.). `{org_id}/{unit_id}/{agent_id}` from the
+ *    spec maps directly to our `{companyId}/{circleId}/{agentId}`.
+ *
+ * 2. **`paperclip/v1/...`** — Paperclip-specific transport that doesn't
+ *    fit the A2A spec (heartbeat polyrhythm, retained Company DNA, IDM
+ *    phase channels, circle discussions, role + skill pools, crosslinks).
+ *    These ride normal MQTT routing — no A2A Registry involvement.
  *
  * Topic shape:
- *   paperclip/v1/discovery/{companyId}/{circleId}/{agentId}   (retained Agent Card)
- *   paperclip/v1/request/{companyId}/{circleId}/{agentId}     (Task request inbox)
- *   paperclip/v1/request/{companyId}/{circleId}/pool/{roleId} (pool inbox; shared subs)
- *   paperclip/v1/reply/{companyId}/{circleId}/{agentId}/{taskId} (Task reply, ephemeral)
- *   paperclip/v1/event/{companyId}/{circleId}/{agentId}       (agent events)
- *   paperclip/v1/idm/{companyId}/{circleId}/{idmId}/phase     (IDM phase transitions)
- *   paperclip/v1/idm/{companyId}/{circleId}/{idmId}/input     (IDM participant inputs)
- *   paperclip/v1/crosslink/{companyId}/{crossLinkId}          (cross-link channel)
+ *   $a2a/v1/discovery/{companyId}/{circleId}/{agentId}    (retained Agent Card, A2A-spec)
+ *   $a2a/v1/request/{companyId}/{circleId}/{agentId}      (Task request inbox, A2A-spec)
+ *   $a2a/v1/request/{companyId}/{circleId}/pool/{roleId}  (pool inbox; shared subs, A2A-spec)
+ *   $a2a/v1/reply/{companyId}/{circleId}/{agentId}/{taskId} (Task reply, A2A-spec)
+ *   $a2a/v1/event/{companyId}/{circleId}/{agentId}        (agent events, A2A-spec)
+ *   paperclip/v1/heartbeat/{companyId}                    (host polyrhythm)
+ *   paperclip/v1/heartbeat-ack/{companyId}/{agentId}      (per-agent ACK)
+ *   paperclip/v1/dna/{companyId}                          (retained Company DNA)
+ *   paperclip/v1/idm/{companyId}/{circleId}/{idmId}/phase (IDM phase transitions)
+ *   paperclip/v1/idm/{companyId}/{circleId}/{idmId}/input (IDM participant inputs)
+ *   paperclip/v1/crosslink/{companyId}/{crossLinkId}      (cross-link channel)
+ *   paperclip/v1/role/...                                 (role pool + broadcast)
+ *   paperclip/v1/skill/...                                (skill pool + broadcast)
+ *   paperclip/v1/discussion/{companyId}/{contextId}       (circle discussion feed)
+ *
+ * The `$` prefix is an EMQX-reserved namespace; the ACL backend
+ * (server/src/mqtt/acl-backend.ts) must explicitly allow `$a2a/...`
+ * subscribes per agent.
  */
 
+/** A2A-spec compliant prefix. Indexed by EMQX A2A Registry. */
+export const A2A_PREFIX = "$a2a/v1";
+
+/** Paperclip-specific transport prefix. Normal MQTT routing. */
 export const TOPIC_PREFIX = "paperclip/v1";
 
 export function discoveryTopic(
@@ -23,7 +48,7 @@ export function discoveryTopic(
   circleId: string,
   agentId: string,
 ): string {
-  return `${TOPIC_PREFIX}/discovery/${companyId}/${circleId}/${agentId}`;
+  return `${A2A_PREFIX}/discovery/${companyId}/${circleId}/${agentId}`;
 }
 
 export function requestTopic(
@@ -31,7 +56,7 @@ export function requestTopic(
   circleId: string,
   agentId: string,
 ): string {
-  return `${TOPIC_PREFIX}/request/${companyId}/${circleId}/${agentId}`;
+  return `${A2A_PREFIX}/request/${companyId}/${circleId}/${agentId}`;
 }
 
 export function poolRequestTopic(
@@ -39,7 +64,7 @@ export function poolRequestTopic(
   circleId: string,
   roleId: string,
 ): string {
-  return `${TOPIC_PREFIX}/request/${companyId}/${circleId}/pool/${roleId}`;
+  return `${A2A_PREFIX}/request/${companyId}/${circleId}/pool/${roleId}`;
 }
 
 export function replyTopic(
@@ -48,7 +73,7 @@ export function replyTopic(
   agentId: string,
   taskId: string,
 ): string {
-  return `${TOPIC_PREFIX}/reply/${companyId}/${circleId}/${agentId}/${taskId}`;
+  return `${A2A_PREFIX}/reply/${companyId}/${circleId}/${agentId}/${taskId}`;
 }
 
 export function eventTopic(
@@ -56,7 +81,7 @@ export function eventTopic(
   circleId: string,
   agentId: string,
 ): string {
-  return `${TOPIC_PREFIX}/event/${companyId}/${circleId}/${agentId}`;
+  return `${A2A_PREFIX}/event/${companyId}/${circleId}/${agentId}`;
 }
 
 export function idmPhaseTopic(
@@ -113,31 +138,33 @@ export function dnaTopic(companyId: string): string {
  * Generic event topic that does not require an agentId scope. Used by the
  * heartbeat bridge for the host-level escalation + watchdog-decision events
  * (`{circleId}=_` and `{agentId}` slot used to carry the event sub-channel).
+ * Uses A2A prefix because EMQX A2A Registry may want to surface these as
+ * agent events under the spec.
  */
 export function hostEventTopic(
   companyId: string,
   circleId: string,
   channel: string,
 ): string {
-  return `${TOPIC_PREFIX}/event/${companyId}/${circleId}/${channel}`;
+  return `${A2A_PREFIX}/event/${companyId}/${circleId}/${channel}`;
 }
 
 export function discoveryWildcard(companyId: string): string {
-  return `${TOPIC_PREFIX}/discovery/${companyId}/+/+`;
+  return `${A2A_PREFIX}/discovery/${companyId}/+/+`;
 }
 
 export function requestWildcardForCircle(
   companyId: string,
   circleId: string,
 ): string {
-  return `${TOPIC_PREFIX}/request/${companyId}/${circleId}/+`;
+  return `${A2A_PREFIX}/request/${companyId}/${circleId}/+`;
 }
 
 export function eventWildcardForCircle(
   companyId: string,
   circleId: string,
 ): string {
-  return `${TOPIC_PREFIX}/event/${companyId}/${circleId}/+`;
+  return `${A2A_PREFIX}/event/${companyId}/${circleId}/+`;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +191,7 @@ export function eventCircleWildcard(
   companyId: string,
   circleId: string,
 ): string {
-  return `${TOPIC_PREFIX}/event/${companyId}/${circleId}/+`;
+  return `${A2A_PREFIX}/event/${companyId}/${circleId}/+`;
 }
 
 /**

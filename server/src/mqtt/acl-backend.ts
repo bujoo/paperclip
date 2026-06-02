@@ -307,11 +307,24 @@ function segEquals(segments: string[], idx: number, expected: string): boolean {
   return segments[idx] === expected;
 }
 
+/** Phase 1.16-EMQX E1 — Accept BOTH topic prefixes: the A2A-spec `$a2a/v1`
+ *  (indexed by the EMQX A2A Registry) and Paperclip's `paperclip/v1` (for
+ *  transport that doesn't fit the spec — heartbeat, dna, idm, discussion,
+ *  role pools, skill pools, crosslinks). The per-channel switch below
+ *  doesn't care which prefix routed the topic — segments[2] is always the
+ *  channel name. */
+function hasKnownPrefix(segments: string[]): boolean {
+  if (segments.length < 2) return false;
+  const isA2A = segments[0] === "$a2a" && segments[1] === "v1";
+  const isPaperclip = segments[0] === "paperclip" && segments[1] === "v1";
+  return isA2A || isPaperclip;
+}
+
 function isPublishAllowed(profile: AgentAclProfile, topic: string): boolean {
   const { segments } = parseTopic(topic);
-  // All A2A topics are at least 5 segments: paperclip/v1/<channel>/<companyId>/...
+  // All A2A/Paperclip topics are at least 4 segments: <prefix>/v1/<channel>/<companyId>/...
   if (segments.length < 4) return false;
-  if (!segEquals(segments, 0, "paperclip") || !segEquals(segments, 1, "v1")) return false;
+  if (!hasKnownPrefix(segments)) return false;
   const channel = segments[2];
   const companyId = segments[3];
   if (companyId !== profile.companyId) return false;
@@ -411,7 +424,7 @@ function isSubscribeAllowed(profile: AgentAclProfile, topic: string): boolean {
   }
   const { segments } = parseTopic(effectiveTopic);
   if (segments.length < 4) return false;
-  if (!segEquals(segments, 0, "paperclip") || !segEquals(segments, 1, "v1")) return false;
+  if (!hasKnownPrefix(segments)) return false;
   const channel = segments[2];
   const companyId = segments[3];
   if (companyId !== profile.companyId) return false;
@@ -560,7 +573,13 @@ export function mqttAclRoutes(db: Db) {
     // Anything else is denied — including bare `paperclip/...` (older or
     // future v-prefixes are not implicitly trusted).
     if (usernameRaw === HOST_MQTT_USERNAME) {
-      if (topicRaw.startsWith("paperclip/v1/") || topicRaw.startsWith("$SYS/")) {
+      // Phase 1.16-EMQX E1 — Host also publishes on `$a2a/v1/...` (A2A-spec
+      // discovery + event channels). $SYS/* is EMQX-internal monitoring.
+      if (
+        topicRaw.startsWith("paperclip/v1/") ||
+        topicRaw.startsWith("$a2a/v1/") ||
+        topicRaw.startsWith("$SYS/")
+      ) {
         res.status(200).json({ result: "allow" });
       } else {
         res.status(200).json({ result: "deny" });

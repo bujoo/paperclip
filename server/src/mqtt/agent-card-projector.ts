@@ -82,6 +82,18 @@ export interface PaperclipAgentCardExtension {
 export interface PaperclipAgentCard {
   /** A2A v1.0 protocol version this Card conforms to. */
   protocolVersion: "1.0";
+  /** Phase 1.16-EMQX E3 — Top-level identity fields per the EMQX A2A spec
+   *  (`emqx-ai/a2a-over-mqtt/architecture.md`). The A2A Registry indexes
+   *  these for cross-agent discovery + management API queries. Maps:
+   *    org_id  = companyId
+   *    unit_id = home circleId
+   *    agent_id = agents.id
+   *  Reproduced here at the top level (in addition to the
+   *  `paperclip.*` namespace) so external A2A clients can read them
+   *  without knowing Paperclip's extension shape. */
+  org_id: string;
+  unit_id: string;
+  agent_id: string;
   /** Human-readable agent name. */
   name: string;
   /** Description combining `agents.title` with the most descriptive role purpose. */
@@ -92,6 +104,13 @@ export interface PaperclipAgentCard {
   url: string;
   /** Derived from `agents.accountabilities`. */
   skills: PaperclipAgentCardSkill[];
+  /** Phase 1.16-EMQX E3 — Capabilities per the open A2A spec. `streaming:
+   *  true` for bedrock_gateway / claude_local agents (Claude API streams);
+   *  false for hermes_local (subprocess CLI, no native stream). */
+  capabilities?: {
+    streaming?: boolean;
+    pushNotifications?: boolean;
+  };
   /** Paperclip-specific deep metadata, namespaced to avoid colliding with future A2A fields. */
   paperclip: PaperclipAgentCardExtension;
 }
@@ -306,11 +325,23 @@ function buildCard(args: {
   const version = String(agent.updatedAt instanceof Date ? agent.updatedAt.getTime() : agent.updatedAt);
   return {
     protocolVersion: "1.0",
+    // Phase 1.16-EMQX E3 — A2A-spec top-level identity. EMQX A2A Registry
+    // indexes these for cross-agent discovery + `emqx ctl a2a_registry
+    // get <org> <unit> <agent>` lookups.
+    org_id: agent.companyId,
+    unit_id: circleId,
+    agent_id: agent.id,
     name: agent.name,
     description,
     version,
     url: `mqtt://internal/${agent.id}`,
     skills: buildSkillsFromAccountabilities(agent.accountabilities ?? []),
+    // All 15 agents are bedrock_gateway → Claude Code → Claude API streams.
+    // If a non-streaming adapter ever returns, gate this on agent.adapterType.
+    capabilities: {
+      streaming: true,
+      pushNotifications: false,
+    },
     paperclip: {
       companyId: agent.companyId,
       circleId,

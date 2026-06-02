@@ -71,21 +71,38 @@ interface AgentMqttHandle {
   retryAttempts: Map<string, number>;
 }
 
-/** Subscribe-retry backoff schedule. After the last entry we give up. */
-const SUBSCRIBE_RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 60_000];
+/**
+ * Tunables for the per-agent MQTT lifecycle. Grouped so operators can find
+ * every threshold/backoff in one place without grepping for individual
+ * `const X = N` lines.
+ */
+const CONFIG = {
+  /** Subscribe-retry backoff schedule. After the last entry we give up. */
+  subscribeRetryDelaysMs: [1_000, 5_000, 15_000, 60_000] as const,
+  /** Failure count at which we flip the handle to fallback mode (the host
+   *  bridge resumes responsibility for the agent until recovery). */
+  fallbackThreshold: 10,
+  /** Connection-count above which a single warning fires — operators should
+   *  bump ulimit or split horizontally past this. */
+  ceilingWarnThreshold: 500,
+  /** Keepalive (seconds) sent on CONNECT. Tightened in dev so missed heartbeats
+   *  surface quickly during local iteration. */
+  keepaliveDefaultProdSeconds: 60,
+  keepaliveDefaultDevSeconds: 15,
+  /** Acceptable bounds for `PAPERCLIP_MQTT_KEEPALIVE_SECONDS` env overrides. */
+  keepaliveMinSeconds: 5,
+  keepaliveMaxSeconds: 600,
+  /** Bootstrap dispatcher: how many ensureAgent() promises in flight at once
+   *  and how long the whole pass is allowed to take before we cut it short. */
+  bootstrapPoolSize: 16,
+  bootstrapDeadlineMs: 30_000,
+} as const;
 
 const _handles = new Map<string, AgentMqttHandle>();
 const _pending = new Map<string, Promise<void>>();
 let _db: Db | null = null;
 let _shuttingDown = false;
 let _ceilingWarned = false;
-
-/** Failure count at which we flip the handle to fallback mode (the host
- *  bridge resumes responsibility for the agent until recovery). */
-const FALLBACK_THRESHOLD = 10;
-/** Connection-count above which a single warning fires — operators should
- *  bump ulimit or split horizontally past this. */
-const CEILING_WARN_THRESHOLD = 500;
 
 // ---------------------------------------------------------------------------
 // Env / config
@@ -101,9 +118,11 @@ function keepaliveFromEnv(): number {
   const raw = process.env.PAPERCLIP_MQTT_KEEPALIVE_SECONDS?.trim();
   if (raw && /^\d+$/.test(raw)) {
     const n = Number(raw);
-    if (n >= 5 && n <= 600) return n;
+    if (n >= CONFIG.keepaliveMinSeconds && n <= CONFIG.keepaliveMaxSeconds) return n;
   }
-  return process.env.NODE_ENV === "production" ? 60 : 15;
+  return process.env.NODE_ENV === "production"
+    ? CONFIG.keepaliveDefaultProdSeconds
+    : CONFIG.keepaliveDefaultDevSeconds;
 }
 
 /** Duplicates `auth-backend.ts`'s `mqttAuthSecret` precedence so the
@@ -371,7 +390,7 @@ export async function ensureAgent(agentId: string): Promise<void> {
       handle.lastError = err instanceof Error ? err : new Error(String(err));
       handle.consecutiveFailures += 1;
       if (
-        handle.consecutiveFailures >= FALLBACK_THRESHOLD &&
+        handle.consecutiveFailures >= CONFIG.fallbackThreshold &&
         !handle.isFallback
       ) {
         handle.isFallback = true;
@@ -385,7 +404,7 @@ export async function ensureAgent(agentId: string): Promise<void> {
       if (_shuttingDown) return;
       handle.consecutiveFailures += 1;
       if (
-        handle.consecutiveFailures >= FALLBACK_THRESHOLD &&
+        handle.consecutiveFailures >= CONFIG.fallbackThreshold &&
         !handle.isFallback
       ) {
         handle.isFallback = true;
@@ -399,7 +418,7 @@ export async function ensureAgent(agentId: string): Promise<void> {
       void handleInbound(handle, topic, payload, packet);
     });
 
-    if (_handles.size >= CEILING_WARN_THRESHOLD && !_ceilingWarned) {
+    if (_handles.size >= CONFIG.ceilingWarnThreshold && !_ceilingWarned) {
       _ceilingWarned = true;
       logger.warn(
         { connections: _handles.size },
@@ -552,7 +571,7 @@ async function trySubscribe(
 function scheduleSubscribeRetry(handle: AgentMqttHandle, filter: string): void {
   const agentId = handle.slot.agentId;
   const attempt = handle.retryAttempts.get(filter) ?? 0;
-  if (attempt >= SUBSCRIBE_RETRY_DELAYS_MS.length) {
+  if (attempt >= CONFIG.subscribeRetryDelaysMs.length) {
     logger.warn(
       { agentId, filter, attempts: attempt },
       "per-agent-client-manager: subscribe retries exhausted — giving up; next reconcile will re-try",
@@ -561,7 +580,7 @@ function scheduleSubscribeRetry(handle: AgentMqttHandle, filter: string): void {
     handle.retryTimers.delete(filter);
     return;
   }
-  const delay = SUBSCRIBE_RETRY_DELAYS_MS[attempt]!;
+  const delay = CONFIG.subscribeRetryDelaysMs[attempt]!;
   handle.retryAttempts.set(filter, attempt + 1);
   const existing = handle.retryTimers.get(filter);
   if (existing) clearTimeout(existing);
@@ -672,14 +691,12 @@ export async function initPerAgentClientManager(db: Db): Promise<void> {
     "per-agent-client-manager: bootstrap",
   );
 
-  const POOL = 16;
-  const DEADLINE_MS = 30_000;
   const queue = [...agentIds];
   const inflight: Promise<unknown>[] = [];
-  const deadline = Date.now() + DEADLINE_MS;
+  const deadline = Date.now() + CONFIG.bootstrapDeadlineMs;
   let attempted = 0;
   while (queue.length > 0 && Date.now() < deadline) {
-    while (inflight.length < POOL && queue.length > 0) {
+    while (inflight.length < CONFIG.bootstrapPoolSize && queue.length > 0) {
       const aid = queue.shift()!;
       attempted += 1;
       const p = ensureAgent(aid).finally(() => {

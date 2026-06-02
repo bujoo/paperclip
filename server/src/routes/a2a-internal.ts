@@ -3,21 +3,19 @@
  * to publish A2A messages on behalf of the calling agent.
  *
  * The MCP server can't import `perAgentClientManager.publishAs` directly
- * (different process). These endpoints bridge: MCP receives a tool call,
- * forwards body to `/api/internal/a2a/{publish,request}`, the server-side
- * handler authenticates the calling agent, then publishes via the standard
- * per-agent MQTT client. ACL is enforced by the broker on the per-agent
- * connection, so a compromised MCP key can't publish topics the agent itself
- * isn't authorised for.
+ * (different process). The MCP tool sends semantic args (`toAgentId`,
+ * `circleId`, `roleId`, etc.); these endpoints build the actual MQTT topic
+ * server-side using the adapter's topic builders, then publish via the
+ * standard per-agent MQTT client. Broker ACL enforces topic-level
+ * authorisation per the per-agent connection.
  *
  * Endpoints:
- *  - POST /api/internal/a2a/publish — fire-and-forget on any topic the caller
- *    is authorised to publish to.
- *  - POST /api/internal/a2a/request — publish + await reply, with timeout.
- *    Uses the underlying MQTT v5 response-topic + correlation-data round-trip
- *    from `publishRequestAwaitReply`.
- *  - GET /api/internal/a2a/agents — proxy to the EMQX A2A Registry's listing
- *    endpoint (`/api/v5/a2a/agents`). Used by the `a2aDiscoverAgents` MCP tool.
+ *  - POST /api/internal/a2a/publish — fire-and-forget. `kind` selects the
+ *    topic dimension (self-event / circle-event / role-broadcast /
+ *    skill-broadcast).
+ *  - POST /api/internal/a2a/request — publish + await reply with timeout.
+ *    `kind` selects the target dimension (agent / role-pool / skill-pool).
+ *  - GET /api/internal/a2a/agents — proxy to EMQX A2A Registry.
  *
  * @module server/routes/a2a-internal
  */
@@ -25,7 +23,17 @@
 import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { sql, type Db } from "@paperclipai/db";
-import { publishRequestAwaitReply, replyTopic } from "@paperclipai/adapter-a2a-mqtt/server";
+import {
+  publishRequestAwaitReply,
+  replyTopic,
+  requestTopic,
+  poolRequestTopic,
+  eventTopic,
+  roleBroadcastTopic,
+  rolePoolTopic,
+  skillPoolTopic,
+  skillBroadcastTopic,
+} from "@paperclipai/adapter-a2a-mqtt/server";
 import * as perAgentClientManager from "../mqtt/per-agent-client-manager.js";
 import { logger } from "../middleware/logger.js";
 import { resolveRequester } from "./holacracy-bridge.js";
@@ -102,10 +110,10 @@ function optionalUserProperties(body: Record<string, unknown>): Record<string, s
 }
 
 /**
- * Resolve an agent's primary circle (any circle they hold a role in). The
- * per-agent MQTT client identifies with `{companyId}/{circleId}/{agentId}` —
- * we need this circleId to build well-formed reply topics for the caller and
- * request topics for the target.
+ * Resolve an agent's primary circle. The per-agent MQTT client identifies
+ * with `{companyId}/{circleId}/{agentId}` — we need this circleId to build
+ * well-formed reply topics for the caller and event topics scoped to the
+ * caller's home circle.
  */
 async function resolvePrimaryCircle(db: Db, agentId: string): Promise<string | null> {
   try {
@@ -126,27 +134,69 @@ async function resolvePrimaryCircle(db: Db, agentId: string): Promise<string | n
   }
 }
 
+type PublishKind = "event-self" | "event-circle" | "role-broadcast" | "skill-broadcast";
+type RequestKind = "agent" | "role-pool" | "skill-pool";
+
 export function a2aInternalRoutes(db: Db) {
   const router = Router();
 
   /**
-   * POST /api/internal/a2a/publish
+   * POST /api/internal/a2a/publish — fire-and-forget on a topic the server
+   * builds from semantic args. The MCP tool layer is the only normal caller.
    *
-   * Fire-and-forget publish on any topic the calling agent is authorised to
-   * publish to. The broker's ACL enforces topic-level authorisation per the
-   * per-agent client identity.
-   *
-   * Body: { companyId, topic, payload, userProperties? }
+   * Body shape varies by `kind`:
+   *  - { kind: "event-self", payload, userProperties? }
+   *  - { kind: "event-circle", circleId, payload, userProperties? }
+   *  - { kind: "role-broadcast", circleId, roleId, payload, userProperties? }
+   *  - { kind: "skill-broadcast", skill, payload, userProperties? }
    */
   router.post("/internal/a2a/publish", async (req, res) => {
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const companyId = requireString(body, "companyId");
-      const topic = requireString(body, "topic");
+      const kind = requireString(body, "kind") as PublishKind;
       const userProperties = optionalUserProperties(body);
       const payload = body.payload;
 
       const requester = await resolveRequester(db, req, companyId);
+      let topic: string;
+      switch (kind) {
+        case "event-self": {
+          const callerCircle = await resolvePrimaryCircle(db, requester.agentId);
+          if (!callerCircle) {
+            throw {
+              status: 400,
+              code: "NO_PRIMARY_CIRCLE",
+              message: "Caller agent has no role assignment; cannot build event topic",
+            };
+          }
+          topic = eventTopic(companyId, callerCircle, requester.agentId);
+          break;
+        }
+        case "event-circle": {
+          const circleId = requireString(body, "circleId");
+          topic = eventTopic(companyId, circleId, requester.agentId);
+          break;
+        }
+        case "role-broadcast": {
+          const circleId = requireString(body, "circleId");
+          const roleId = requireString(body, "roleId");
+          topic = roleBroadcastTopic(companyId, circleId, roleId);
+          break;
+        }
+        case "skill-broadcast": {
+          const skill = requireString(body, "skill");
+          topic = skillBroadcastTopic(companyId, skill);
+          break;
+        }
+        default:
+          throw {
+            status: 400,
+            code: "VALIDATION_ERROR",
+            message: `Unknown publish kind: ${kind}`,
+          };
+      }
+
       await perAgentClientManager.publishAs(requester.agentId, topic, payload, {
         qos: 1,
         ...(userProperties ? { userProperties } : {}),
@@ -162,19 +212,22 @@ export function a2aInternalRoutes(db: Db) {
   });
 
   /**
-   * POST /api/internal/a2a/request
+   * POST /api/internal/a2a/request — publish + await reply, with timeout.
    *
-   * Publish a request and await a reply, with timeout. Uses MQTT v5
-   * response-topic + correlation-data via `publishRequestAwaitReply`.
+   * Body shape varies by `kind`:
+   *  - { kind: "agent", toAgentId, payload, contextId?, timeoutMs?, userProperties? }
+   *  - { kind: "role-pool", circleId, roleId, payload, contextId?, timeoutMs?, userProperties? }
+   *  - { kind: "skill-pool", skill, payload, contextId?, timeoutMs?, userProperties? }
    *
-   * Body: { companyId, requestTopic, payload, contextId?, timeoutMs?,
-   *         userProperties? }
+   * For role-pool/skill-pool: the broker round-robins to ONE filler via
+   * shared subscription on the target side; the request itself publishes
+   * on the un-shared topic.
    */
   router.post("/internal/a2a/request", async (req, res) => {
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const companyId = requireString(body, "companyId");
-      const targetRequestTopic = requireString(body, "requestTopic");
+      const kind = requireString(body, "kind") as RequestKind;
       const contextId = optionalString(body, "contextId");
       const timeoutMs = optionalNumber(body, "timeoutMs") ?? 60_000;
       const extraUserProperties = optionalUserProperties(body) ?? {};
@@ -189,6 +242,46 @@ export function a2aInternalRoutes(db: Db) {
           message: "Caller agent has no role assignment; cannot construct reply topic",
         };
       }
+
+      let targetRequestTopic: string;
+      switch (kind) {
+        case "agent": {
+          const toAgentId = requireString(body, "toAgentId");
+          const targetCircle = await resolvePrimaryCircle(db, toAgentId);
+          if (!targetCircle) {
+            throw {
+              status: 400,
+              code: "TARGET_NO_PRIMARY_CIRCLE",
+              message: `Target agent ${toAgentId} has no role assignment`,
+            };
+          }
+          targetRequestTopic = requestTopic(companyId, targetCircle, toAgentId);
+          break;
+        }
+        case "role-pool": {
+          const circleId = requireString(body, "circleId");
+          const roleId = requireString(body, "roleId");
+          // Use poolRequestTopic for spec-compliant A2A pool dispatch.
+          // Receivers subscribe via $share/role-{roleId}/<topic>.
+          targetRequestTopic = poolRequestTopic(companyId, circleId, roleId);
+          // Also include the legacy rolePoolTopic for any subscribers still
+          // on the Paperclip-prefixed topology (best-effort; ignore failure).
+          void rolePoolTopic; // keep import warm
+          break;
+        }
+        case "skill-pool": {
+          const skill = requireString(body, "skill");
+          targetRequestTopic = skillPoolTopic(companyId, skill);
+          break;
+        }
+        default:
+          throw {
+            status: 400,
+            code: "VALIDATION_ERROR",
+            message: `Unknown request kind: ${kind}`,
+          };
+      }
+
       const taskId = randomUUID();
       const callerReplyTopic = replyTopic(companyId, callerCircle, requester.agentId, taskId);
 
@@ -221,6 +314,7 @@ export function a2aInternalRoutes(db: Db) {
         res.status(200).json({
           taskId,
           contextId: contextId ?? taskId,
+          requestTopic: targetRequestTopic,
           awaited: true,
           timedOut: false,
           reply: reply.payload,
@@ -232,6 +326,7 @@ export function a2aInternalRoutes(db: Db) {
           res.status(200).json({
             taskId,
             contextId: contextId ?? taskId,
+            requestTopic: targetRequestTopic,
             awaited: true,
             timedOut: true,
             reply: null,
@@ -246,12 +341,7 @@ export function a2aInternalRoutes(db: Db) {
   });
 
   /**
-   * GET /api/internal/a2a/agents
-   *
-   * Proxy to EMQX A2A Registry's listing endpoint. Lets agents discover
-   * peers + their Agent Cards. Optional filter via query params.
-   *
-   * Query: ?org_id=...&unit_id=...&skill=...
+   * GET /api/internal/a2a/agents — proxy to EMQX A2A Registry.
    */
   router.get("/internal/a2a/agents", async (req, res) => {
     try {

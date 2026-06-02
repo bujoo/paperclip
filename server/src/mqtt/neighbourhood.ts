@@ -26,7 +26,7 @@ import { sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { logger } from "../middleware/logger.js";
 import { getCompanyDna, type DnaEnvelope } from "../services/company-dna.js";
-import { coerceRowsList } from "../util/db.js";
+import { coerceRowsList, safeLoad } from "../util/db.js";
 
 const MAX_NEIGHBOURS = 20;
 const MAX_PERCEPTIONS = 20;
@@ -172,19 +172,15 @@ interface AgentRow extends Record<string, unknown> {
 }
 
 async function loadAgentCompanyId(db: Db, agentId: string): Promise<string | null> {
-  try {
+  return safeLoad(async () => {
     const rows = await db.execute<AgentRow>(sql`
       SELECT company_id::text AS "companyId"
       FROM public.agents
       WHERE id = ${agentId}::uuid
       LIMIT 1
     `);
-    const list = coerceRowsList<AgentRow>(rows);
-    return list[0]?.companyId ?? null;
-  } catch (err) {
-    logger.debug({ err, agentId }, "neighbourhood: agent company lookup failed");
-    return null;
-  }
+    return coerceRowsList<AgentRow>(rows)[0]?.companyId ?? null;
+  }, null, { logger, message: "neighbourhood: agent company lookup failed", context: { agentId } });
 }
 
 async function loadNeighbours(db: Db, agentId: string): Promise<NeighbourEntry[]> {
@@ -193,16 +189,16 @@ async function loadNeighbours(db: Db, agentId: string): Promise<NeighbourEntry[]
   // accountabilities + last-heartbeat for "are they alive"). Each (agent,
   // circle) pair is one row — the same agent may appear multiple times if
   // it's in multiple shared circles.
-  try {
-    interface Row extends Record<string, unknown> {
-      id: string;
-      name: string;
-      title: string | null;
-      accountabilities: Array<Record<string, unknown>> | null;
-      lastHeartbeatAt: string | null;
-      circleId: string;
-      circleName: string | null;
-    }
+  interface Row extends Record<string, unknown> {
+    id: string;
+    name: string;
+    title: string | null;
+    accountabilities: Array<Record<string, unknown>> | null;
+    lastHeartbeatAt: string | null;
+    circleId: string;
+    circleName: string | null;
+  }
+  return safeLoad(async () => {
     const rows = await db.execute<Row>(sql`
       WITH my_circles AS (
         SELECT DISTINCT c.id AS circle_id, c.name AS circle_name
@@ -228,8 +224,7 @@ async function loadNeighbours(db: Db, agentId: string): Promise<NeighbourEntry[]
       ORDER BY "name" ASC
       LIMIT ${MAX_NEIGHBOURS}
     `);
-    const list = coerceRowsList<Row>(rows);
-    return list.map((r): NeighbourEntry => ({
+    return coerceRowsList<Row>(rows).map((r): NeighbourEntry => ({
       id: r.id,
       name: r.name,
       title: r.title,
@@ -238,10 +233,7 @@ async function loadNeighbours(db: Db, agentId: string): Promise<NeighbourEntry[]
       circleId: r.circleId,
       circleName: r.circleName,
     }));
-  } catch (err) {
-    logger.debug({ err, agentId }, "neighbourhood: neighbour lookup failed");
-    return [];
-  }
+  }, [], { logger, message: "neighbourhood: neighbour lookup failed", context: { agentId } });
 }
 
 async function loadRecentPulses(db: Db, agentId: string): Promise<RecentPulseEntry[]> {
@@ -250,12 +242,12 @@ async function loadRecentPulses(db: Db, agentId: string): Promise<RecentPulseEnt
   // tactical-pulse / governance-pulse event sub-channels, capped at 20. This
   // gives the LLM "what happened recently in my circles" without forcing it
   // to query the broker.
-  try {
-    interface Row extends Record<string, unknown> {
-      topic: string;
-      payloadJson: unknown;
-      receivedAt: string;
-    }
+  interface Row extends Record<string, unknown> {
+    topic: string;
+    payloadJson: unknown;
+    receivedAt: string;
+  }
+  return safeLoad(async () => {
     const rows = await db.execute<Row>(sql`
       SELECT
         topic                       AS "topic",
@@ -271,31 +263,27 @@ async function loadRecentPulses(db: Db, agentId: string): Promise<RecentPulseEnt
       ORDER BY received_at DESC
       LIMIT ${MAX_RECENT_PULSES}
     `);
-    const list = coerceRowsList<Row>(rows);
-    return list.map((r): RecentPulseEntry => ({
+    return coerceRowsList<Row>(rows).map((r): RecentPulseEntry => ({
       topic: r.topic,
       payloadJson: r.payloadJson,
       receivedAt: r.receivedAt,
       circleId: extractCircleIdFromTopic(r.topic),
     }));
-  } catch (err) {
-    logger.debug({ err, agentId }, "neighbourhood: recent pulses lookup failed");
-    return [];
-  }
+  }, [], { logger, message: "neighbourhood: recent pulses lookup failed", context: { agentId } });
 }
 
 async function consumePerceptions(db: Db, agentId: string): Promise<PerceptionEntry[]> {
   // Read unconsumed perceptions and mark them consumed in one round-trip.
   // We use UPDATE ... RETURNING so concurrent runs of the same agent don't
   // double-consume the same row.
-  try {
-    interface Row extends Record<string, unknown> {
-      id: string;
-      topic: string;
-      payloadJson: unknown;
-      userProperties: Record<string, unknown> | null;
-      receivedAt: string;
-    }
+  interface Row extends Record<string, unknown> {
+    id: string;
+    topic: string;
+    payloadJson: unknown;
+    userProperties: Record<string, unknown> | null;
+    receivedAt: string;
+  }
+  return safeLoad(async () => {
     const rows = await db.execute<Row>(sql`
       WITH eligible AS (
         SELECT id
@@ -316,43 +304,39 @@ async function consumePerceptions(db: Db, agentId: string): Promise<PerceptionEn
         p.user_properties   AS "userProperties",
         p.received_at::text AS "receivedAt"
     `);
-    const list = coerceRowsList<Row>(rows);
-    return list.map((r): PerceptionEntry => ({
+    return coerceRowsList<Row>(rows).map((r): PerceptionEntry => ({
       id: r.id,
       topic: r.topic,
       payloadJson: r.payloadJson,
       userProperties: r.userProperties,
       receivedAt: r.receivedAt,
     }));
-  } catch (err) {
-    logger.debug({ err, agentId }, "neighbourhood: perception consume failed");
-    return [];
-  }
+  }, [], { logger, message: "neighbourhood: perception consume failed", context: { agentId } });
 }
 
 async function loadActiveDiscussions(
   db: Db,
   agentId: string,
 ): Promise<ActiveDiscussionEntry[]> {
-  try {
-    interface Row extends Record<string, unknown> {
-      id: string;
-      topic: string;
-      speakerMode: string;
-      roundsPlanned: number;
-      roundsCompleted: number;
-      phase: string;
-      currentSpeakerIdx: number;
-      speakerOrder: string[] | null;
-      participantAgentIds: string[];
-      contextId: string;
-      startedAt: string;
-      circleId: string;
-      circleName: string | null;
-      proposerAgentId: string | null;
-      proposerAgentName: string | null;
-      openObjectionCount: number;
-    }
+  interface Row extends Record<string, unknown> {
+    id: string;
+    topic: string;
+    speakerMode: string;
+    roundsPlanned: number;
+    roundsCompleted: number;
+    phase: string;
+    currentSpeakerIdx: number;
+    speakerOrder: string[] | null;
+    participantAgentIds: string[];
+    contextId: string;
+    startedAt: string;
+    circleId: string;
+    circleName: string | null;
+    proposerAgentId: string | null;
+    proposerAgentName: string | null;
+    openObjectionCount: number;
+  }
+  return safeLoad(async () => {
     const rows = await db.execute<Row>(sql`
       SELECT
         d.id::text                    AS "id",
@@ -384,8 +368,7 @@ async function loadActiveDiscussions(
       ORDER BY d.started_at DESC
       LIMIT ${MAX_ACTIVE_DISCUSSIONS}
     `);
-    const list = coerceRowsList<Row>(rows);
-    return list.map((r): ActiveDiscussionEntry => {
+    return coerceRowsList<Row>(rows).map((r): ActiveDiscussionEntry => {
       const order = Array.isArray(r.speakerOrder) && r.speakerOrder.length > 0
         ? r.speakerOrder
         : r.participantAgentIds;
@@ -413,21 +396,18 @@ async function loadActiveDiscussions(
         openObjectionCount: r.openObjectionCount ?? 0,
       };
     });
-  } catch (err) {
-    logger.debug({ err, agentId }, "neighbourhood: active-discussions load failed");
-    return [];
-  }
+  }, [], { logger, message: "neighbourhood: active-discussions load failed", context: { agentId } });
 }
 
 async function loadTrustSignals(db: Db, agentId: string): Promise<TrustSignalEntry[]> {
-  try {
-    interface Row extends Record<string, unknown> {
-      trustedAgentId: string;
-      trustedAgentName: string | null;
-      skillSlug: string;
-      successfulExchanges: number;
-      failedExchanges: number;
-    }
+  interface Row extends Record<string, unknown> {
+    trustedAgentId: string;
+    trustedAgentName: string | null;
+    skillSlug: string;
+    successfulExchanges: number;
+    failedExchanges: number;
+  }
+  return safeLoad(async () => {
     const rows = await db.execute<Row>(sql`
       SELECT
         t.trusted_agent_id::text  AS "trustedAgentId",
@@ -441,18 +421,14 @@ async function loadTrustSignals(db: Db, agentId: string): Promise<TrustSignalEnt
       ORDER BY t.last_exchange_at DESC NULLS LAST
       LIMIT ${MAX_TRUST_SIGNALS}
     `);
-    const list = coerceRowsList<Row>(rows);
-    return list.map((r): TrustSignalEntry => ({
+    return coerceRowsList<Row>(rows).map((r): TrustSignalEntry => ({
       trustedAgentId: r.trustedAgentId,
       trustedAgentName: r.trustedAgentName,
       skillSlug: r.skillSlug,
       successfulExchanges: r.successfulExchanges,
       failedExchanges: r.failedExchanges,
     }));
-  } catch (err) {
-    logger.debug({ err, agentId }, "neighbourhood: trust-signals load failed");
-    return [];
-  }
+  }, [], { logger, message: "neighbourhood: trust-signals load failed", context: { agentId } });
 }
 
 async function loadMyRoles(db: Db, agentId: string): Promise<MyRoleEntry[]> {
@@ -460,17 +436,17 @@ async function loadMyRoles(db: Db, agentId: string): Promise<MyRoleEntry[]> {
   // full purpose + accountabilities + domains so the LLM can reason from its
   // own role (not just peers'). Mirrors loadNeighbours() join shape but
   // filters to the calling agent.
-  try {
-    interface Row extends Record<string, unknown> {
-      roleId: string;
-      roleName: string;
-      roleType: string;
-      purpose: string | null;
-      accountabilities: Array<Record<string, unknown> | string> | null;
-      domains: Array<Record<string, unknown> | string> | null;
-      circleId: string;
-      circleName: string | null;
-    }
+  interface Row extends Record<string, unknown> {
+    roleId: string;
+    roleName: string;
+    roleType: string;
+    purpose: string | null;
+    accountabilities: Array<Record<string, unknown> | string> | null;
+    domains: Array<Record<string, unknown> | string> | null;
+    circleId: string;
+    circleName: string | null;
+  }
+  return safeLoad(async () => {
     const rows = await db.execute<Row>(sql`
       SELECT
         r.id::text                                                     AS "roleId",
@@ -488,8 +464,7 @@ async function loadMyRoles(db: Db, agentId: string): Promise<MyRoleEntry[]> {
       ORDER BY ra.assigned_at DESC
       LIMIT ${MAX_MY_ROLES}
     `);
-    const list = coerceRowsList<Row>(rows);
-    return list.map((r): MyRoleEntry => ({
+    return coerceRowsList<Row>(rows).map((r): MyRoleEntry => ({
       roleId: r.roleId,
       roleName: r.roleName,
       roleType: r.roleType,
@@ -499,27 +474,24 @@ async function loadMyRoles(db: Db, agentId: string): Promise<MyRoleEntry[]> {
       circleId: r.circleId,
       circleName: r.circleName,
     }));
-  } catch (err) {
-    logger.debug({ err, agentId }, "neighbourhood: my-roles lookup failed");
-    return [];
-  }
+  }, [], { logger, message: "neighbourhood: my-roles lookup failed", context: { agentId } });
 }
 
 async function loadCircleStrategies(db: Db, agentId: string): Promise<StrategyEntry[]> {
   // For each circle the agent has a role assignment in, list the top N most
   // recent active strategies. Joined to agents so we can surface the
   // human-readable "set by" name instead of a UUID.
-  try {
-    interface Row extends Record<string, unknown> {
-      id: string;
-      circleId: string;
-      circleName: string | null;
-      text: string;
-      setBy: string | null;
-      setByName: string | null;
-      createdAt: string;
-      circleRank: number;
-    }
+  interface Row extends Record<string, unknown> {
+    id: string;
+    circleId: string;
+    circleName: string | null;
+    text: string;
+    setBy: string | null;
+    setByName: string | null;
+    createdAt: string;
+    circleRank: number;
+  }
+  return safeLoad(async () => {
     const rows = await db.execute<Row>(sql`
       WITH my_circles AS (
         SELECT DISTINCT c.id AS circle_id, c.name AS circle_name
@@ -555,8 +527,7 @@ async function loadCircleStrategies(db: Db, agentId: string): Promise<StrategyEn
       WHERE ranked.rn <= ${MAX_STRATEGIES_PER_CIRCLE}
       ORDER BY ranked.created_at DESC
     `);
-    const list = coerceRowsList<Row>(rows);
-    return list.map((r): StrategyEntry => ({
+    return coerceRowsList<Row>(rows).map((r): StrategyEntry => ({
       id: r.id,
       circleId: r.circleId,
       circleName: r.circleName,
@@ -565,10 +536,7 @@ async function loadCircleStrategies(db: Db, agentId: string): Promise<StrategyEn
       setByName: r.setByName,
       createdAt: r.createdAt,
     }));
-  } catch (err) {
-    logger.debug({ err, agentId }, "neighbourhood: circle-strategies lookup failed");
-    return [];
-  }
+  }, [], { logger, message: "neighbourhood: circle-strategies lookup failed", context: { agentId } });
 }
 
 async function loadCircleMetrics(db: Db, agentId: string): Promise<MetricEntry[]> {
@@ -576,17 +544,17 @@ async function loadCircleMetrics(db: Db, agentId: string): Promise<MetricEntry[]
   // (most recent period within the lookback window) and the prior value (the
   // one before that) so the LLM can see a trend. NULL prior_value means
   // either no history or only one report — surfaced as trend=unknown.
-  try {
-    interface Row extends Record<string, unknown> {
-      metricId: string;
-      metricName: string;
-      unit: string | null;
-      circleId: string;
-      circleName: string | null;
-      latestValue: string | number | null;
-      latestPeriod: string | null;
-      priorValue: string | number | null;
-    }
+  interface Row extends Record<string, unknown> {
+    metricId: string;
+    metricName: string;
+    unit: string | null;
+    circleId: string;
+    circleName: string | null;
+    latestValue: string | number | null;
+    latestPeriod: string | null;
+    priorValue: string | number | null;
+  }
+  return safeLoad(async () => {
     const rows = await db.execute<Row>(sql`
       WITH my_circles AS (
         SELECT DISTINCT c.id AS circle_id, c.name AS circle_name
@@ -621,8 +589,7 @@ async function loadCircleMetrics(db: Db, agentId: string): Promise<MetricEntry[]
       ORDER BY latest.period_date DESC NULLS LAST
       LIMIT ${MAX_METRICS}
     `);
-    const list = coerceRowsList<Row>(rows);
-    return list.map((r): MetricEntry => {
+    return coerceRowsList<Row>(rows).map((r): MetricEntry => {
       const latestNum = toNumOrNull(r.latestValue);
       const priorNum = toNumOrNull(r.priorValue);
       let trend: MetricEntry["trend"] = "unknown";
@@ -643,26 +610,23 @@ async function loadCircleMetrics(db: Db, agentId: string): Promise<MetricEntry[]
         trend,
       };
     });
-  } catch (err) {
-    logger.debug({ err, agentId }, "neighbourhood: circle-metrics lookup failed");
-    return [];
-  }
+  }, [], { logger, message: "neighbourhood: circle-metrics lookup failed", context: { agentId } });
 }
 
 async function loadCircleChecklists(db: Db, agentId: string): Promise<ChecklistEntry[]> {
   // For each circle the agent is in, surface checklist outcomes from the most
   // recent period within the lookback window: how many responses came back
   // CHECKED vs total responses for that period.
-  try {
-    interface Row extends Record<string, unknown> {
-      checklistId: string;
-      itemText: string;
-      circleId: string;
-      circleName: string | null;
-      checkedCount: string | number;
-      totalCount: string | number;
-      latestPeriod: string | null;
-    }
+  interface Row extends Record<string, unknown> {
+    checklistId: string;
+    itemText: string;
+    circleId: string;
+    circleName: string | null;
+    checkedCount: string | number;
+    totalCount: string | number;
+    latestPeriod: string | null;
+  }
+  return safeLoad(async () => {
     const rows = await db.execute<Row>(sql`
       WITH my_circles AS (
         SELECT DISTINCT c.id AS circle_id, c.name AS circle_name
@@ -696,8 +660,7 @@ async function loadCircleChecklists(db: Db, agentId: string): Promise<ChecklistE
       ORDER BY lp.period_date DESC NULLS LAST
       LIMIT ${MAX_CHECKLISTS}
     `);
-    const list = coerceRowsList<Row>(rows);
-    return list.map((r): ChecklistEntry => ({
+    return coerceRowsList<Row>(rows).map((r): ChecklistEntry => ({
       checklistId: r.checklistId,
       itemText: r.itemText,
       circleId: r.circleId,
@@ -706,10 +669,7 @@ async function loadCircleChecklists(db: Db, agentId: string): Promise<ChecklistE
       totalCount: Number(r.totalCount ?? 0),
       latestPeriod: r.latestPeriod,
     }));
-  } catch (err) {
-    logger.debug({ err, agentId }, "neighbourhood: circle-checklists lookup failed");
-    return [];
-  }
+  }, [], { logger, message: "neighbourhood: circle-checklists lookup failed", context: { agentId } });
 }
 
 function normalizeStringList(raw: Array<Record<string, unknown> | string> | null | undefined): string[] {

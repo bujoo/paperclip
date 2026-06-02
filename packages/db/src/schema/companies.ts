@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, timestamp, boolean, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const companies = pgTable(
   "companies",
@@ -26,6 +26,13 @@ export const companies = pgTable(
     feedbackDataSharingConsentByUserId: text("feedback_data_sharing_consent_by_user_id"),
     feedbackDataSharingTermsVersion: text("feedback_data_sharing_terms_version"),
     brandColor: text("brand_color"),
+    // Phase 1.9 — Company DNA columns (added by migration 0078).
+    missionStatement: text("mission_statement"),
+    values: jsonb("values").$type<string[]>().notNull().default([]),
+    constitution: text("constitution"),
+    dnaGeneration: integer("dna_generation").notNull().default(0),
+    dnaMutatedAt: timestamp("dna_mutated_at", { withTimezone: true }),
+    dnaMutatedReason: text("dna_mutated_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

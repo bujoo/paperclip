@@ -30,6 +30,7 @@ export const issues = pgTable(
     title: text("title").notNull(),
     description: text("description"),
     status: text("status").notNull().default("backlog"),
+    kind: text("kind").notNull().default("next_action"),
     priority: text("priority").notNull().default("medium"),
     assigneeAgentId: uuid("assignee_agent_id").references(() => agents.id),
     assigneeUserId: text("assignee_user_id"),
@@ -45,6 +46,15 @@ export const issues = pgTable(
     originId: text("origin_id"),
     originRunId: text("origin_run_id"),
     originFingerprint: text("origin_fingerprint").notNull().default("default"),
+    // Phase 1.10 — when an inbound MQTT message materialises as an issue, the
+    // runtime bridge records the delivery topic so the agent (and audit) can
+    // tell which addressing dimension the work came in on (personal direct,
+    // circle broadcast, role pool, role broadcast, skill pool, skill broadcast).
+    originTopic: text("origin_topic"),
+    // Phase 1.13 — A2A `Task.context_id` for multi-turn conversation threading.
+    // The inbound handler persists the inbound `context_id` (or mints one when
+    // absent) so replies + follow-up A2A messages can be linked by thread id.
+    a2aContextId: text("a2a_context_id"),
     requestDepth: integer("request_depth").notNull().default(0),
     billingCode: text("billing_code"),
     assigneeAdapterOverrides: jsonb("assignee_adapter_overrides").$type<Record<string, unknown>>(),
@@ -74,6 +84,7 @@ export const issues = pgTable(
       table.status,
     ),
     parentIdx: index("issues_company_parent_idx").on(table.companyId, table.parentId),
+    companyKindIdx: index("issues_company_kind_idx").on(table.companyId, table.kind),
     projectIdx: index("issues_company_project_idx").on(table.companyId, table.projectId),
     originIdx: index("issues_company_origin_idx").on(table.companyId, table.originKind, table.originId),
     projectWorkspaceIdx: index("issues_company_project_workspace_idx").on(table.companyId, table.projectWorkspaceId),
@@ -133,3 +144,6 @@ export const issues = pgTable(
       ),
   }),
 );
+
+export const ISSUE_KINDS = ["project", "next_action"] as const;
+export type IssueKind = (typeof ISSUE_KINDS)[number];

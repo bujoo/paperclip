@@ -39,6 +39,7 @@ export const agents = pgTable(
       metric: string;
       target: number | string | boolean;
       alert_threshold: number | string | boolean;
+      alert_direction?: "higher_is_better" | "lower_is_better";
       cadence: "hourly" | "daily" | "weekly" | "monthly";
       escalation_path?: string[];
     }>>().notNull().default([]),

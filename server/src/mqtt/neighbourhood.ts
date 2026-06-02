@@ -84,6 +84,16 @@ export interface ActiveDiscussionEntry {
    *  having to derive it from elsewhere. */
   circleId: string;
   circleName: string | null;
+  /** F9 (Phase 1.15h-l) — the proposer (per Holacracy, the agent who tabled the
+   *  tension for this discussion). Sourced from `circle_discussions.initiated_by_agent_id`
+   *  until F7 lands its own `proposer_agent_id` column. */
+  proposerAgentId: string | null;
+  proposerAgentName: string | null;
+  /** F9 — count of unresolved objections + blocks (commitments where signal
+   *  is 'block' or 'support-with-objection'). Lets Facilitator + proposer see
+   *  how much integration work remains; lets non-proposers see whether their
+   *  reaction round produced contention. */
+  openObjectionCount: number;
 }
 
 export interface TrustSignalEntry {
@@ -338,6 +348,9 @@ async function loadActiveDiscussions(
       startedAt: string;
       circleId: string;
       circleName: string | null;
+      proposerAgentId: string | null;
+      proposerAgentName: string | null;
+      openObjectionCount: number;
     }
     const rows = await db.execute<Row>(sql`
       SELECT
@@ -353,9 +366,18 @@ async function loadActiveDiscussions(
         d.a2a_context_id              AS "contextId",
         d.started_at::text            AS "startedAt",
         d.circle_id::text             AS "circleId",
-        c.name                        AS "circleName"
+        c.name                        AS "circleName",
+        d.initiated_by_agent_id::text AS "proposerAgentId",
+        p.name                        AS "proposerAgentName",
+        COALESCE((
+          SELECT COUNT(*)::int
+          FROM public.discussion_commitments dc
+          WHERE dc.discussion_id = d.id
+            AND dc.signal IN ('block', 'support-with-objection')
+        ), 0)                         AS "openObjectionCount"
       FROM public.circle_discussions d
       LEFT JOIN plugin_holacracy_c5049b5dfe.circles c ON c.id = d.circle_id
+      LEFT JOIN public.agents p ON p.id = d.initiated_by_agent_id
       WHERE d.status = 'open'
         AND ${agentId}::uuid = ANY(d.participant_agent_ids)
       ORDER BY d.started_at DESC
@@ -385,6 +407,9 @@ async function loadActiveDiscussions(
         startedAt: r.startedAt,
         circleId: r.circleId,
         circleName: r.circleName,
+        proposerAgentId: r.proposerAgentId,
+        proposerAgentName: r.proposerAgentName,
+        openObjectionCount: r.openObjectionCount ?? 0,
       };
     });
   } catch (err) {
@@ -987,6 +1012,21 @@ export function renderNeighbourhoodMarkdown(snapshot: NeighbourhoodSnapshot): st
       lines.push(
         `  - Discussion: \`${d.id}\` · ContextId: \`${d.contextId}\``,
       );
+      // F9 — proposer identity + open-objection count. Proposer line lets every
+      // participant know whose tension is being processed (Facilitator stays
+      // neutral, Secretary scribes verbatim, Lead Link doesn't synthesize, etc.).
+      // Open-objection count tells Facilitator + proposer how much integration
+      // work remains in the objections/integration phases.
+      if (d.proposerAgentId) {
+        const isYou = d.proposerAgentId === snapshot.agentId ? " — **THIS IS YOU**" : "";
+        const proposerLabel = d.proposerAgentName ? `${d.proposerAgentName} ` : "";
+        lines.push(`  - Proposer: ${proposerLabel}\`${d.proposerAgentId}\`${isYou}`);
+      }
+      if (d.openObjectionCount > 0) {
+        lines.push(
+          `  - Open objections / blocks: **${d.openObjectionCount}** (commitments where signal is \`block\` or \`support-with-objection\`)`,
+        );
+      }
     }
   }
   lines.push("");

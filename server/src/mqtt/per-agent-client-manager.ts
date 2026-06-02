@@ -176,9 +176,7 @@ async function loadHomeSlot(db: Db, agentId: string): Promise<AgentSlot | null> 
       WHERE id = ${agentId}::uuid AND status NOT IN ('archived', 'terminated')
       LIMIT 1
     `);
-    const compList = Array.isArray(compRows)
-      ? compRows
-      : (compRows as unknown as { rows: Array<{ companyId: string }> }).rows ?? [];
+    const compList = coerceRowsList<{ companyId: string }>(compRows);
     if (!compList[0]) return null;
     return {
       companyId: compList[0].companyId,

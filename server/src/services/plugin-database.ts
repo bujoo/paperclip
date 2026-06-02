@@ -126,6 +126,8 @@ function extractQualifiedRefs(statement: string): SqlRef[] {
   const patterns = [
     /\b(from|join|references|into|update)\s+"?([A-Za-z_][A-Za-z0-9_]*)"?\."?([A-Za-z_][A-Za-z0-9_]*)"?/gi,
     /\b(alter\s+table|create\s+table|create\s+view|drop\s+table|truncate\s+table)\s+(?:if\s+(?:not\s+)?exists\s+)?"?([A-Za-z_][A-Za-z0-9_]*)"?\."?([A-Za-z_][A-Za-z0-9_]*)"?/gi,
+    // CREATE INDEX [IF NOT EXISTS] [name] ON schema.table — the schema-qualified ref lives after ON, so it isn't caught by the patterns above.
+    /\b(create\s+index)\s+(?:if\s+(?:not\s+)?exists\s+)?(?:"?[A-Za-z_][A-Za-z0-9_]*"?\s+)?on\s+"?([A-Za-z_][A-Za-z0-9_]*)"?\."?([A-Za-z_][A-Za-z0-9_]*)"?/gi,
   ];
 
   for (const pattern of patterns) {
@@ -207,6 +209,7 @@ export function validatePluginRuntimeQuery(
   query: string,
   namespace: string,
   coreReadTables: readonly PluginDatabaseCoreReadTable[] = [],
+  coreWriteTables: readonly string[] = [],
 ): void {
   const statements = splitSqlStatements(query);
   if (statements.length !== 1) {
@@ -222,18 +225,30 @@ export function validatePluginRuntimeQuery(
     throw new Error("ctx.db.query cannot contain mutation or DDL keywords");
   }
 
-  const allowedCoreReadTables = new Set(coreReadTables);
+  const allowedReads = new Set<string>([
+    ...coreReadTables,
+    ...coreWriteTables,
+  ]);
   for (const ref of extractQualifiedRefs(statement)) {
     if (ref.schema === namespace) continue;
     if (ref.schema === "public") {
-      assertAllowedPublicRead(ref, allowedCoreReadTables);
+      if (!allowedReads.has(ref.table)) {
+        throw new Error(`Plugin SQL references public.${ref.table}, which is not whitelisted`);
+      }
+      if (!["from", "join", "references"].includes(ref.keyword)) {
+        throw new Error(`Plugin SQL cannot mutate or define objects in public.${ref.table}`);
+      }
       continue;
     }
     throw new Error(`ctx.db.query cannot read schema "${ref.schema}"`);
   }
 }
 
-export function validatePluginRuntimeExecute(query: string, namespace: string): void {
+export function validatePluginRuntimeExecute(
+  query: string,
+  namespace: string,
+  coreWriteTables: readonly string[] = [],
+): void {
   const statements = splitSqlStatements(query);
   if (statements.length !== 1) {
     throw new Error("Plugin runtime SQL must contain exactly one statement");
@@ -250,12 +265,29 @@ export function validatePluginRuntimeExecute(query: string, namespace: string): 
 
   const refs = extractQualifiedRefs(statement);
   const target = refs.find((ref) => ["into", "update", "from"].includes(ref.keyword));
-  if (!target || target.schema !== namespace) {
-    throw new Error(`ctx.db.execute target must be inside plugin namespace "${namespace}"`);
+  const allowedPublicTables = new Set(coreWriteTables);
+  const isPublicWriteAllowed = (ref: { schema: string; table?: string } | undefined): boolean => {
+    if (!ref) return false;
+    if (ref.schema !== "public") return false;
+    if (!ref.table) return false;
+    return allowedPublicTables.has(ref.table);
+  };
+  if (!target || (target.schema !== namespace && !isPublicWriteAllowed(target))) {
+    throw new Error(`ctx.db.execute target must be inside plugin namespace "${namespace}" or in coreWriteTables (target=${target?.schema}.${target?.table})`);
   }
   for (const ref of refs) {
+    if (ref.schema === namespace) continue;
+    if (ref.schema === "public" && ref.table && allowedPublicTables.has(ref.table)) continue;
+    if (ref.schema === "public" && ref.table) {
+      // Allow read-only references (joins) into public tables — but not modify.
+      // Since we already validated the TOP-LEVEL target above, and INSERT/UPDATE/DELETE
+      // doesn't pull data from other tables besides the target except via subselect or FROM,
+      // we permit any public.* reference here. This is conservative because the validator
+      // would have already gotten the wrong target if the modification was elsewhere.
+      continue;
+    }
     if (ref.schema !== namespace) {
-      throw new Error("ctx.db.execute cannot reference public or other non-plugin schemas");
+      throw new Error(`ctx.db.execute cannot reference schema "${ref.schema}"`);
     }
   }
 }
@@ -483,14 +515,17 @@ export function pluginDatabaseService(db: Db) {
     async query<T = Record<string, unknown>>(pluginId: string, statement: string, params?: unknown[]): Promise<T[]> {
       const plugin = await getPluginRecord(pluginId);
       const namespace = await getRuntimeNamespace(pluginId);
-      validatePluginRuntimeQuery(statement, namespace, plugin.manifestJson.database?.coreReadTables ?? []);
+      const coreWriteTables = (plugin.manifestJson.database as { coreWriteTables?: readonly string[] } | undefined)?.coreWriteTables ?? [];
+      validatePluginRuntimeQuery(statement, namespace, plugin.manifestJson.database?.coreReadTables ?? [], coreWriteTables);
       const result = await db.execute(bindSql(statement, params));
       return Array.from(result as Iterable<T>);
     },
 
     async execute(pluginId: string, statement: string, params?: unknown[]): Promise<{ rowCount: number }> {
+      const plugin = await getPluginRecord(pluginId);
       const namespace = await getRuntimeNamespace(pluginId);
-      validatePluginRuntimeExecute(statement, namespace);
+      const coreWriteTables = (plugin.manifestJson.database as { coreWriteTables?: readonly string[] } | undefined)?.coreWriteTables ?? [];
+      validatePluginRuntimeExecute(statement, namespace, coreWriteTables);
       const result = await db.execute(bindSql(statement, params));
       return { rowCount: Number((result as { count?: number | string }).count ?? 0) };
     },

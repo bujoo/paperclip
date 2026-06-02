@@ -116,6 +116,15 @@ export interface HostServices {
     subscribe(params: WorkerToHostMethods["events.subscribe"][0]): Promise<void>;
   };
 
+  /** Provides `mqtt.publish`, `mqtt.publishAs`, `mqtt.subscribe`, `mqtt.unsubscribe`, and `mqtt.reconcileAgent` (A2A transport). */
+  mqtt: {
+    publish(params: WorkerToHostMethods["mqtt.publish"][0]): Promise<void>;
+    publishAs(params: WorkerToHostMethods["mqtt.publishAs"][0]): Promise<void>;
+    subscribe(params: WorkerToHostMethods["mqtt.subscribe"][0]): Promise<void>;
+    unsubscribe(params: WorkerToHostMethods["mqtt.unsubscribe"][0]): Promise<void>;
+    reconcileAgent(params: WorkerToHostMethods["mqtt.reconcileAgent"][0]): Promise<void>;
+  };
+
   /** Provides `http.fetch`. */
   http: {
     fetch(params: WorkerToHostMethods["http.fetch"][0]): Promise<WorkerToHostMethods["http.fetch"][1]>;
@@ -303,6 +312,14 @@ const METHOD_CAPABILITY_MAP: Record<WorkerToHostMethodName, PluginCapability | n
   "events.emit": "events.emit",
   "events.subscribe": "events.subscribe",
 
+  // MQTT (A2A transport — Phase 1.5 Layer 0)
+  "mqtt.publish": "mqtt.publish",
+  "mqtt.publishAs": "mqtt.publishAs",
+  "mqtt.subscribe": "mqtt.subscribe",
+  "mqtt.unsubscribe": "mqtt.unsubscribe",
+  // Phase 1.15h-f — gated by mqtt.publishAs (same trust level).
+  "mqtt.reconcileAgent": "mqtt.publishAs",
+
   // HTTP
   "http.fetch": "http.outbound",
 
@@ -480,6 +497,24 @@ export function createHostClientHandlers(
     }),
     "events.subscribe": gated("events.subscribe", async (params) => {
       return services.events.subscribe(params);
+    }),
+
+    // MQTT (A2A transport — Phase 1.5 Layer 0)
+    "mqtt.publish": gated("mqtt.publish", async (params) => {
+      return services.mqtt.publish(params);
+    }),
+    "mqtt.publishAs": gated("mqtt.publishAs", async (params) => {
+      return services.mqtt.publishAs(params);
+    }),
+    "mqtt.subscribe": gated("mqtt.subscribe", async (params) => {
+      return services.mqtt.subscribe(params);
+    }),
+    "mqtt.unsubscribe": gated("mqtt.unsubscribe", async (params) => {
+      return services.mqtt.unsubscribe(params);
+    }),
+    // Phase 1.15h-f — Force per-agent MQTT subscription recompute.
+    "mqtt.reconcileAgent": gated("mqtt.reconcileAgent", async (params) => {
+      return services.mqtt.reconcileAgent(params);
     }),
 
     // HTTP

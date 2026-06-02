@@ -93,6 +93,12 @@ const OPERATION_CAPABILITIES: Record<string, readonly PluginCapability[]> = {
   // Runtime / Integration operations
   "events.subscribe": ["events.subscribe"],
   "events.emit": ["events.emit"],
+  "mqtt.publish": ["mqtt.publish"],
+  "mqtt.publishAs": ["mqtt.publishAs"],
+  "mqtt.subscribe": ["mqtt.subscribe"],
+  "mqtt.unsubscribe": ["mqtt.unsubscribe"],
+  // Phase 1.15h-f — gated by mqtt.publishAs (same trust level as forcing publishes).
+  "mqtt.reconcileAgent": ["mqtt.publishAs"],
   "jobs.schedule": ["jobs.schedule"],
   "jobs.cancel": ["jobs.schedule"],
   "webhooks.receive": ["webhooks.receive"],

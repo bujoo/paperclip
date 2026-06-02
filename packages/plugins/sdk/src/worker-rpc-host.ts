@@ -62,6 +62,9 @@ import type {
   ToolResult,
   EventFilter,
   AgentSessionEvent,
+  MqttMessage,
+  PluginMqttPublishOptions,
+  PluginMqttSubscribeOptions,
 } from "./types.js";
 import type {
   JsonRpcId,
@@ -168,6 +171,13 @@ interface EventRegistration {
   fn: (event: PluginEvent) => Promise<void>;
 }
 
+interface MqttSubscription {
+  topicPattern: string;
+  qos?: 0 | 1 | 2;
+  sharedGroup?: string;
+  fn: (msg: MqttMessage) => void | Promise<void>;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -268,6 +278,7 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
 
   // Plugin handler registrations (populated during setup())
   const eventHandlers: EventRegistration[] = [];
+  const mqttSubscriptions: MqttSubscription[] = [];
   const jobHandlers = new Map<string, (job: PluginJobContext) => Promise<void>>();
   const launcherRegistrations = new Map<string, PluginLauncherRegistration>();
   const dataHandlers = new Map<string, (params: Record<string, unknown>) => Promise<unknown>>();
@@ -416,6 +427,120 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
 
         async emit(name: string, companyId: string, payload: unknown): Promise<void> {
           await callHost("events.emit", { name, companyId, payload });
+        },
+      },
+
+      mqtt: {
+        async publish(
+          topic: string,
+          payload: unknown,
+          opts?: PluginMqttPublishOptions,
+        ): Promise<void> {
+          // Buffers and typed arrays are not JSON-serializable; base64-encode them
+          // so they survive the JSON-RPC envelope intact.
+          let wirePayload: unknown = payload;
+          if (payload instanceof Uint8Array) {
+            wirePayload = Buffer.from(payload).toString("base64");
+          } else if (typeof Buffer !== "undefined" && Buffer.isBuffer(payload)) {
+            wirePayload = (payload as Buffer).toString("base64");
+          }
+          const correlationData = opts?.correlationData
+            ? Buffer.from(opts.correlationData).toString("base64")
+            : undefined;
+          await callHost("mqtt.publish", {
+            topic,
+            payload: wirePayload,
+            qos: opts?.qos,
+            retain: opts?.retain,
+            responseTopic: opts?.responseTopic,
+            correlationData,
+            userProperties: opts?.userProperties,
+          });
+        },
+
+        async publishAs(
+          agentId: string,
+          topic: string,
+          payload: unknown,
+          opts?: PluginMqttPublishOptions,
+        ): Promise<void> {
+          let wirePayload: unknown = payload;
+          if (payload instanceof Uint8Array) {
+            wirePayload = Buffer.from(payload).toString("base64");
+          } else if (typeof Buffer !== "undefined" && Buffer.isBuffer(payload)) {
+            wirePayload = (payload as Buffer).toString("base64");
+          }
+          const correlationData = opts?.correlationData
+            ? Buffer.from(opts.correlationData).toString("base64")
+            : undefined;
+          await callHost("mqtt.publishAs", {
+            agentId,
+            topic,
+            payload: wirePayload,
+            qos: opts?.qos,
+            retain: opts?.retain,
+            responseTopic: opts?.responseTopic,
+            correlationData,
+            userProperties: opts?.userProperties,
+          });
+        },
+
+        async reconcileAgent(agentId: string): Promise<void> {
+          await callHost("mqtt.reconcileAgent", { agentId });
+        },
+
+        on(
+          topicPattern: string,
+          handler: (msg: MqttMessage) => void | Promise<void>,
+          opts?: PluginMqttSubscribeOptions,
+        ): () => Promise<void> {
+          const sharedGroup = opts?.sharedGroup;
+          const subscription: MqttSubscription = {
+            topicPattern,
+            qos: opts?.qos,
+            sharedGroup,
+            fn: handler,
+          };
+          mqttSubscriptions.push(subscription);
+          // Register the subscription on the host so messages are forwarded
+          // to this worker via `mqtt.message` notifications.
+          void callHost("mqtt.subscribe", {
+            topicPattern,
+            qos: opts?.qos,
+            sharedGroup,
+          }).catch((err) => {
+            notifyHost("log", {
+              level: "warn",
+              message: `Failed to subscribe to MQTT topic "${topicPattern}" on host: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            });
+          });
+          return async () => {
+            const idx = mqttSubscriptions.indexOf(subscription);
+            if (idx === -1) return;
+            mqttSubscriptions.splice(idx, 1);
+            // Reference-counted unsubscribe: only tell the host to drop the
+            // broker subscription when no other local handlers remain for
+            // the same (topicPattern, sharedGroup) tuple. This prevents
+            // tearing down a shared subscription that another handler in
+            // the same worker still depends on.
+            const stillSubscribed = mqttSubscriptions.some(
+              (s) =>
+                s.topicPattern === topicPattern && s.sharedGroup === sharedGroup,
+            );
+            if (stillSubscribed) return;
+            try {
+              await callHost("mqtt.unsubscribe", { topicPattern, sharedGroup });
+            } catch (err) {
+              notifyHost("log", {
+                level: "warn",
+                message: `Failed to unsubscribe from MQTT topic "${topicPattern}" on host: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              });
+            }
+          };
         },
       },
 
@@ -1213,6 +1338,62 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
     }
   }
 
+  /**
+   * Shape of the host→worker `mqtt.message` notification payload. The host
+   * base64-encodes binary fields (payload, correlationData) so the JSON-RPC
+   * envelope can carry them.
+   */
+  interface MqttMessageNotificationParams {
+    /** The pattern this delivery was matched against, exactly as registered. */
+    topicPattern: string;
+    /** The concrete topic the broker delivered the message on. */
+    topic: string;
+    /** Base64-encoded raw payload bytes. */
+    payload: string;
+    qos: 0 | 1 | 2;
+    retain: boolean;
+    responseTopic?: string;
+    /** Base64-encoded correlation data, when present. */
+    correlationData?: string;
+    userProperties?: Record<string, string>;
+  }
+
+  async function handleMqttMessage(params: MqttMessageNotificationParams): Promise<void> {
+    // Find the subscription that registered this pattern. If multiple
+    // handlers registered the same pattern, every match-by-pattern is invoked
+    // (mirroring the events.on semantics).
+    const matches = mqttSubscriptions.filter((s) => s.topicPattern === params.topicPattern);
+    if (matches.length === 0) return;
+
+    const message: MqttMessage = {
+      topic: params.topic,
+      payload: Buffer.from(params.payload, "base64"),
+      qos: params.qos,
+      retain: params.retain,
+      responseTopic: params.responseTopic,
+      correlationData: params.correlationData
+        ? Buffer.from(params.correlationData, "base64")
+        : undefined,
+      userProperties: params.userProperties,
+    };
+
+    for (const subscription of matches) {
+      try {
+        await subscription.fn(message);
+      } catch (err) {
+        // Log error but continue processing other handlers so one failing
+        // handler doesn't prevent the rest from running.
+        notifyHost("log", {
+          level: "error",
+          message: `MQTT handler for "${subscription.topicPattern}" failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          meta: { topic: params.topic, stack: err instanceof Error ? err.stack : undefined },
+        });
+      }
+    }
+  }
+
   async function handleOnEvent(params: OnEventParams): Promise<void> {
     const event = params.event;
 
@@ -1475,6 +1656,14 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
           notifyHost("log", {
             level: "error",
             message: `Failed to handle event notification: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        });
+      } else if (notif.method === "mqtt.message" && notif.params) {
+        // MQTT broker notifications — dispatch to registered subscription handlers
+        handleMqttMessage(notif.params as MqttMessageNotificationParams).catch((err) => {
+          notifyHost("log", {
+            level: "error",
+            message: `Failed to handle MQTT notification: ${err instanceof Error ? err.message : String(err)}`,
           });
         });
       }

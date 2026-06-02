@@ -502,6 +502,32 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         await harness.emit(`plugin.${manifest.id}.${name}`, payload, { companyId });
       },
     },
+    mqtt: {
+      async publish(_topic, _payload, _opts) {
+        requireCapability(manifest, capabilitySet, "mqtt.publish");
+        // No-op in test harness — the host-side MQTT bridge is not running.
+      },
+      async publishAs(_agentId, _topic, _payload, _opts) {
+        requireCapability(manifest, capabilitySet, "mqtt.publishAs");
+      },
+      async reconcileAgent(_agentId) {
+        // Phase 1.15h-f — gated by mqtt.publishAs (same trust level).
+        requireCapability(manifest, capabilitySet, "mqtt.publishAs");
+      },
+      on(_topicPattern, _handler, _opts) {
+        requireCapability(manifest, capabilitySet, "mqtt.subscribe");
+        // No-op subscription — return an unsubscribe handle that, if invoked,
+        // would in production also call the host's `mqtt.unsubscribe` RPC.
+        return async () => {
+          // Capability check parity with the live SDK path: the unsubscribe
+          // closure invokes the host's `mqtt.unsubscribe` method, which is
+          // gated on the `mqtt.unsubscribe` capability.
+          if (capabilitySet.has("mqtt.unsubscribe")) return;
+          // Fall through silently if not declared — matches production
+          // behaviour where the worker-side wrapper logs and continues.
+        };
+      },
+    },
     jobs: {
       register(key, fn) {
         requireCapability(manifest, capabilitySet, "jobs.schedule");

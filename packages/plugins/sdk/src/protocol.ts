@@ -651,6 +651,81 @@ export interface WorkerToHostMethods {
     result: void,
   ];
 
+  // MQTT — A2A transport (Phase 1.5 Layer 0)
+  "mqtt.publish": [
+    params: {
+      topic: string;
+      /** JSON-serializable payload, or base64-encoded string for binary content. */
+      payload: unknown;
+      /** MQTT QoS level. Defaults to 1 (at-least-once). */
+      qos?: 0 | 1 | 2;
+      /** Whether the broker should retain the message on the topic. Defaults to false. */
+      retain?: boolean;
+      /** MQTT v5 response topic property. */
+      responseTopic?: string;
+      /** MQTT v5 correlation data, base64-encoded. */
+      correlationData?: string;
+      /** MQTT v5 user properties. */
+      userProperties?: Record<string, string>;
+    },
+    result: void,
+  ];
+  "mqtt.publishAs": [
+    params: {
+      /** UUID of the agent whose connection should publish this message.
+       *  The broker sees the publisher's client_id as
+       *  `{companyId}/{circleId}/{agentId}` for audit truthfulness. Requires
+       *  the per-agent MQTT client manager to have the agent connected;
+       *  throws otherwise. */
+      agentId: string;
+      topic: string;
+      /** JSON-serializable payload, or base64-encoded string for binary content. */
+      payload: unknown;
+      qos?: 0 | 1 | 2;
+      retain?: boolean;
+      responseTopic?: string;
+      /** MQTT v5 correlation data, base64-encoded. */
+      correlationData?: string;
+      userProperties?: Record<string, string>;
+    },
+    result: void,
+  ];
+  "mqtt.subscribe": [
+    params: {
+      /** Topic filter; may include MQTT wildcards (`+`, `#`). */
+      topicPattern: string;
+      /** MQTT QoS level. Defaults to 1 (at-least-once). */
+      qos?: 0 | 1 | 2;
+      /** Shared-subscription group; the broker rewrites as `$share/{group}/{topic}` for pool dispatch. */
+      sharedGroup?: string;
+    },
+    result: void,
+  ];
+  "mqtt.unsubscribe": [
+    params: {
+      /** Topic filter the worker previously subscribed to. */
+      topicPattern: string;
+      /** Shared-subscription group used at subscribe time, if any. */
+      sharedGroup?: string;
+    },
+    result: void,
+  ];
+  /**
+   * Phase 1.15h-f — Force per-agent MQTT subscription recompute for the given
+   * agents. Used by the host bridge when membership-affecting DB state changes
+   * mid-session (e.g. a new circle discussion is created and the participants
+   * need to subscribe to the discussion topic so wake-on-perception fires).
+   * Requires the `mqtt.publishAs` capability — same trust level as forcing a
+   * per-agent publish.
+   */
+  "mqtt.reconcileAgent": [
+    params: {
+      /** UUID of the agent whose MQTT subscriptions should be recomputed. */
+      agentId: string;
+    },
+    result: void,
+  ];
+
   // HTTP
   "http.fetch": [
     params: { url: string; init?: Record<string, unknown> },

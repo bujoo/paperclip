@@ -395,6 +395,142 @@ export interface PluginEventsClient {
   emit(name: string, companyId: string, payload: unknown): Promise<void>;
 }
 
+// ---------------------------------------------------------------------------
+// MQTT (A2A transport — Phase 1.5 Layer 0)
+// ---------------------------------------------------------------------------
+
+/**
+ * A message delivered to an `ctx.mqtt.on()` subscription handler.
+ *
+ * The host decodes MQTT v5 properties (response topic, correlation data, user
+ * properties) when present. The payload is delivered as a `Buffer` by default;
+ * plugin authors should `JSON.parse(msg.payload.toString("utf8"))` for JSON
+ * payloads, or treat the buffer as raw bytes for binary content.
+ *
+ * @see PLUGIN_SPEC.md §16.3 — A2A Transport (MQTT)
+ */
+export interface MqttMessage {
+  /** The full topic the message was published to (no wildcards). */
+  topic: string;
+  /** Raw payload bytes. Use `payload.toString("utf8")` for text or JSON. */
+  payload: Buffer;
+  /** MQTT QoS level the broker delivered the message at. */
+  qos: 0 | 1 | 2;
+  /** Whether the message was published with the `retain` flag. */
+  retain: boolean;
+  /** MQTT v5 response topic property, if set by the publisher. */
+  responseTopic?: string;
+  /** MQTT v5 correlation data property, if set by the publisher. */
+  correlationData?: Buffer;
+  /** MQTT v5 user properties, if any. */
+  userProperties?: Record<string, string>;
+}
+
+/**
+ * Options accepted by `ctx.mqtt.publish()`.
+ */
+export interface PluginMqttPublishOptions {
+  /** MQTT QoS level. Defaults to 1 (at-least-once). */
+  qos?: 0 | 1 | 2;
+  /** Whether the broker should retain the message on the topic. Defaults to false. */
+  retain?: boolean;
+  /** MQTT v5 response topic property. */
+  responseTopic?: string;
+  /** MQTT v5 correlation data property. */
+  correlationData?: Buffer;
+  /** MQTT v5 user properties. */
+  userProperties?: Record<string, string>;
+}
+
+/**
+ * Options accepted by `ctx.mqtt.on()`.
+ */
+export interface PluginMqttSubscribeOptions {
+  /** MQTT QoS level. Defaults to 1 (at-least-once). */
+  qos?: 0 | 1 | 2;
+  /**
+   * Shared-subscription group; the host rewrites the subscription as
+   * `$share/{group}/{topic}` so the broker load-balances message delivery
+   * across all subscribers in the group. Used for A2A role-pool dispatch.
+   */
+  sharedGroup?: string;
+}
+
+/**
+ * `ctx.mqtt` — publish to and subscribe from the Paperclip A2A MQTT broker.
+ *
+ * The host owns the broker connection, authentication, and topic ACLs. Plugin
+ * workers use this client for agent-to-agent messaging that crosses host
+ * boundaries (per Phase 1.5 Layer 0).
+ *
+ * Requires `mqtt.publish` capability for `publish()`.
+ * Requires `mqtt.subscribe` capability for `on()`.
+ *
+ * @see PLUGIN_SPEC.md §16.3 — A2A Transport (MQTT)
+ */
+export interface PluginMqttClient {
+  /**
+   * Publish a message to an MQTT topic.
+   *
+   * If `payload` is a `Buffer`, `Uint8Array`, or string, it is sent as-is.
+   * Other JSON-serializable values are stringified to JSON before transmission.
+   *
+   * @param topic - Concrete topic (no wildcards) to publish to
+   * @param payload - Message payload (JSON-serializable or raw bytes)
+   * @param opts - QoS, retain flag, and MQTT v5 properties
+   */
+  publish(topic: string, payload: unknown, opts?: PluginMqttPublishOptions): Promise<void>;
+
+  /**
+   * Publish a message under a specific agent's MQTT identity (Phase 1.11).
+   *
+   * Routes through the per-agent client manager's connection for `agentId`,
+   * so the broker sees the publisher as `{companyId}/{circleId}/{agentId}`.
+   * Used for agent-originated emits (cross-link signals, role-pool work
+   * acknowledgements, etc.) where downstream audit trails care about the
+   * publisher identity.
+   *
+   * Requires `mqtt.publishAs` capability. Throws if the per-agent
+   * connection is not ready (during boot, during fallback, or when
+   * `PAPERCLIP_PER_AGENT_MQTT=off`).
+   */
+  publishAs(
+    agentId: string,
+    topic: string,
+    payload: unknown,
+    opts?: PluginMqttPublishOptions,
+  ): Promise<void>;
+
+  /**
+   * Phase 1.15h-f — Force a per-agent MQTT subscription recompute for the
+   * given agent. The host re-runs `computeDesiredSubscriptions(db, agentId)`
+   * and reconciles add/remove against the agent's connected client. Used by
+   * the host bridge when membership state changes mid-session (e.g. a new
+   * circle discussion is created and the participants must subscribe to the
+   * discussion topic so wake-on-perception fires).
+   *
+   * Requires `mqtt.publishAs` capability (same trust level as forcing a
+   * per-agent publish). No-op if the agent isn't connected yet.
+   */
+  reconcileAgent(agentId: string): Promise<void>;
+
+  /**
+   * Subscribe to a topic pattern. The handler is invoked once per message
+   * delivered by the broker.
+   *
+   * @param topicPattern - Topic filter; may include MQTT wildcards (`+`, `#`)
+   * @param handler - Invoked for each matching message
+   * @param opts - QoS and optional shared-subscription group
+   * @returns An async unsubscribe function. Awaiting it ensures the host has
+   *   torn down the broker subscription before resolving.
+   */
+  on(
+    topicPattern: string,
+    handler: (msg: MqttMessage) => void | Promise<void>,
+    opts?: PluginMqttSubscribeOptions,
+  ): () => Promise<void>;
+}
+
 /**
  * `ctx.jobs` — register handlers for scheduled jobs declared in the manifest.
  *
@@ -1478,6 +1614,9 @@ export interface PluginContext {
 
   /** Subscribe to and emit domain events. Requires `events.subscribe` / `events.emit`. */
   events: PluginEventsClient;
+
+  /** Publish and subscribe to A2A MQTT topics. Requires `mqtt.publish` / `mqtt.subscribe`. */
+  mqtt: PluginMqttClient;
 
   /** Register handlers for scheduled jobs. Requires `jobs.schedule`. */
   jobs: PluginJobsClient;

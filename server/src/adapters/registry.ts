@@ -91,6 +91,16 @@ import {
   agentConfigurationDoc as bedrockGatewayAgentConfigurationDoc,
   models as bedrockGatewayModels,
 } from "@paperclipai/adapter-bedrock-gateway";
+import {
+  execute as a2aMqttExecute,
+  testEnvironment as a2aMqttTestEnvironment,
+  listA2AMqttSkills,
+  syncA2AMqttSkills,
+} from "@paperclipai/adapter-a2a-mqtt/server";
+import {
+  agentConfigurationDoc as a2aMqttAgentConfigurationDoc,
+  models as a2aMqttModels,
+} from "@paperclipai/adapter-a2a-mqtt";
 import { listCodexModels, refreshCodexModels } from "./codex-models.js";
 import { listCursorModels } from "./cursor-models.js";
 import {
@@ -269,6 +279,21 @@ const bedrockGatewayAdapter: ServerAdapterModule = {
   agentConfigurationDoc: bedrockGatewayAgentConfigurationDoc,
 };
 
+const a2aMqttAdapter: ServerAdapterModule = {
+  type: "a2a_mqtt",
+  execute: a2aMqttExecute,
+  testEnvironment: a2aMqttTestEnvironment,
+  listSkills: listA2AMqttSkills,
+  syncSkills: syncA2AMqttSkills,
+  models: a2aMqttModels,
+  // a2a_mqtt speaks to a remote agent over MQTT — no local-JWT impersonation,
+  // no managed instructions bundle, no materialised runtime skills.
+  supportsLocalAgentJwt: false,
+  supportsInstructionsBundle: false,
+  requiresMaterializedRuntimeSkills: false,
+  agentConfigurationDoc: a2aMqttAgentConfigurationDoc,
+};
+
 const openCodeLocalAdapter: ServerAdapterModule = {
   type: "opencode_local",
   execute: openCodeExecute,
@@ -333,6 +358,17 @@ const hermesLocalAdapter: ServerAdapterModule = {
       "Never use a board, browser, or local-board session for Paperclip API writes.",
     ].join("\n");
 
+    // Phase 1.15h-f — surface the neighbourhood snapshot to hermes. The
+    // heartbeat composes `runtimeConfig.companyDnaMarkdown` (DNA + circle
+    // peers + recent broadcasts + active discussions) — claude-local reads it
+    // natively, hermes does not. Prepend it to the prompt so hermes agents can
+    // SEE their team and recent activity, not just their assigned task.
+    const runtimeConfigForHermes = (normalizedCtx as unknown as { config?: Record<string, unknown> }).config ?? {};
+    const dnaMarkdown =
+      typeof runtimeConfigForHermes.companyDnaMarkdown === "string"
+        ? runtimeConfigForHermes.companyDnaMarkdown.trim()
+        : "";
+
     const patchedConfig: Record<string, unknown> = {
       ...existingConfig,
       env: {
@@ -342,10 +378,25 @@ const hermesLocalAdapter: ServerAdapterModule = {
       },
     };
 
-    // Only inject the auth guard into promptTemplate when a custom template already exists.
-    // When no custom template is set, Hermes uses its built-in default heartbeat/task prompt —
-    // overwriting it with only the auth guard text would strip the assigned issue/workflow instructions.
-    if (promptTemplate) {
+    // Build the effective promptTemplate:
+    //   <neighbourhood snapshot>\n\n---\n\n<auth guard>\n\n<existing template>
+    // When no existing template is set, hermes uses its built-in default
+    // heartbeat/task prompt — but we still want the neighbourhood prefix in
+    // front of it, so we set promptTemplate to (snapshot + auth guard) and
+    // rely on hermes appending its default per-turn body if needed. If we
+    // have NO snapshot AND NO existing template, leave promptTemplate unset
+    // so hermes's default behaviour is preserved end-to-end.
+    const prefixParts: string[] = [];
+    if (dnaMarkdown) prefixParts.push(dnaMarkdown);
+    if (promptTemplate || dnaMarkdown) prefixParts.push(authGuardPrompt);
+    const prefix = prefixParts.join("\n\n---\n\n");
+    if (prefix && promptTemplate) {
+      patchedConfig.promptTemplate = `${prefix}\n\n${promptTemplate}`;
+    } else if (prefix && !promptTemplate) {
+      patchedConfig.promptTemplate = prefix;
+    } else if (promptTemplate) {
+      // No DNA snapshot but custom template exists — preserve prior behaviour
+      // (auth guard prepended to template).
       patchedConfig.promptTemplate = `${authGuardPrompt}\n\n${promptTemplate}`;
     }
 
@@ -393,6 +444,7 @@ function registerBuiltInAdapters() {
     geminiLocalAdapter,
     openclawGatewayAdapter,
     bedrockGatewayAdapter,
+    a2aMqttAdapter,
     hermesLocalAdapter,
     processAdapter,
     httpAdapter,

@@ -24,6 +24,23 @@ const ACTIVITY_ACTION_TO_PLUGIN_EVENT: Readonly<Record<string, PluginEventType>>
   budget_soft_threshold_crossed: "budget.incident.opened",
   budget_hard_threshold_crossed: "budget.incident.opened",
   budget_incident_resolved: "budget.incident.resolved",
+  // Map agent presence-affecting actions to `agent.status_changed` so the
+  // Agent Card projector + A2A bridge can react to pause/resume/terminate
+  // /delete lifecycle events (Phase 1.5 Layer 0).
+  agent_paused: "agent.status_changed",
+  agent_resumed: "agent.status_changed",
+  agent_approved: "agent.status_changed",
+  agent_terminated: "agent.status_changed",
+  agent_deleted: "agent.status_changed",
+  // Phase 1.8 — Heartbeat externalization. Map existing recovery + watchdog
+  // activity actions to the new PluginEventType slots so the MQTT bridge can
+  // route them without modifying heartbeat.ts / recovery/service.ts.
+  "issue.harness_liveness_escalation_created": "issue.harness_liveness_escalation",
+  "heartbeat.watchdog_decision_recorded": "heartbeat.watchdog_decision",
+  "heartbeat.watchdog_snoozed": "heartbeat.watchdog_decision",
+  // Phase 1.9 — Company DNA mutation event (also accept dotted form).
+  company_dna_mutated: "company.dna.mutated",
+  "company.dna.mutated": "company.dna.mutated",
 };
 
 let _pluginEventBus: PluginEventBus | null = null;

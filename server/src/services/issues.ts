@@ -23,6 +23,8 @@ import {
   issueReadStates,
   issueThreadInteractions,
   issues,
+  ISSUE_KINDS,
+  type IssueKind,
   labels,
   projectWorkspaces,
   projects,
@@ -202,6 +204,64 @@ export type ChildIssueCompletionSummary = {
 function sameRunLock(checkoutRunId: string | null, actorRunId: string | null) {
   if (actorRunId) return checkoutRunId === actorRunId;
   return checkoutRunId == null;
+}
+
+/**
+ * Validates that `kind` is a member of the canonical `ISSUE_KINDS` enum.
+ * Throws a typed unprocessable error tagged `invalid_issue_kind` for any
+ * other value. Returns the narrowed `IssueKind` for type-safe downstream
+ * use (e.g. `assertValidIssueKindHierarchy`).
+ */
+function assertValidIssueKind(kind: unknown): IssueKind {
+  if (typeof kind === "string" && (ISSUE_KINDS as readonly string[]).includes(kind)) {
+    return kind as IssueKind;
+  }
+  throw unprocessable("Invalid issue kind", {
+    code: "invalid_issue_kind",
+    kind,
+    allowed: ISSUE_KINDS,
+  });
+}
+
+/**
+ * Validates the parent/kind relationship for a new issue.
+ *
+ * Rule: a `next_action` issue may only have a `project` parent (or no parent).
+ * Top-level issues (no parent) may be either kind. Projects may not be nested
+ * under other issues, and next-actions must roll up to a project when they are
+ * not standalone.
+ *
+ * The `kind` parameter is narrowed to `IssueKind` so callers must validate
+ * via `assertValidIssueKind` (or otherwise constrain to the enum) before
+ * invoking this helper.
+ */
+async function assertValidIssueKindHierarchy(
+  dbOrTx: DbReader,
+  companyId: string,
+  kind: IssueKind,
+  parentId: string | null | undefined,
+) {
+  if (!parentId) return;
+  const parentRow = await dbOrTx
+    .select({ id: issues.id, kind: issues.kind })
+    .from(issues)
+    .where(and(eq(issues.id, parentId), eq(issues.companyId, companyId)))
+    .then((rows) => rows[0] ?? null);
+  if (!parentRow) {
+    throw unprocessable("Parent issue not found", { parentId });
+  }
+  if (kind === "next_action" && parentRow.kind !== "project") {
+    throw unprocessable(
+      "next_action issues may only have a project parent",
+      { parentId, parentKind: parentRow.kind },
+    );
+  }
+  if (kind === "project") {
+    throw unprocessable(
+      "project issues cannot have a parent issue",
+      { parentId },
+    );
+  }
 }
 
 const TERMINAL_HEARTBEAT_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
@@ -1401,6 +1461,7 @@ const issueListSelect = {
     END
   `,
   status: issues.status,
+  kind: issues.kind,
   priority: issues.priority,
   assigneeAgentId: issues.assigneeAgentId,
   assigneeUserId: issues.assigneeUserId,
@@ -1416,6 +1477,8 @@ const issueListSelect = {
   originId: issues.originId,
   originRunId: issues.originRunId,
   originFingerprint: issues.originFingerprint,
+  originTopic: issues.originTopic,
+  a2aContextId: issues.a2aContextId,
   requestDepth: issues.requestDepth,
   billingCode: issues.billingCode,
   assigneeAdapterOverrides: issues.assigneeAdapterOverrides,
@@ -2154,7 +2217,8 @@ export function issueService(db: Db) {
         `);
       }
       if (filters?.status) {
-        const statuses = filters.status.split(",").map((s) => s.trim());
+        const raw = Array.isArray(filters.status) ? filters.status.join(",") : String(filters.status);
+        const statuses = raw.split(",").map((s) => s.trim()).filter(Boolean);
         conditions.push(statuses.length === 1 ? eq(issues.status, statuses[0]) : inArray(issues.status, statuses));
       }
       if (filters?.assigneeAgentId) {
@@ -2686,6 +2750,8 @@ export function issueService(db: Db) {
         throw unprocessable("in_progress issues require an assignee");
       }
       return db.transaction(async (tx) => {
+        const effectiveKind = assertValidIssueKind(issueData.kind ?? "next_action");
+        await assertValidIssueKindHierarchy(tx, companyId, effectiveKind, issueData.parentId ?? null);
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, companyId);
         const projectGoalId = await getProjectDefaultGoalId(tx, companyId, issueData.projectId);
         let projectWorkspaceId = issueData.projectWorkspaceId ?? null;
@@ -2790,6 +2856,7 @@ export function issueService(db: Db) {
 
         const values = {
           ...issueData,
+          kind: effectiveKind,
           requestDepth: clampIssueRequestDepth(issueData.requestDepth),
           originKind: issueData.originKind ?? "manual",
           goalId: resolveIssueGoalId({
@@ -2867,6 +2934,25 @@ export function issueService(db: Db) {
         delete issueData.executionWorkspacePreference;
         delete issueData.executionWorkspaceSettings;
       }
+
+      // `kind` updates are forbidden — chosen over the more permissive
+      // "allow only when no children exist" rule because (a) the hierarchy
+      // invariants in `assertValidIssueKindHierarchy` already constrain
+      // creation, and (b) flipping kind on a live issue risks breaking
+      // workflow templates, GTD next-action semantics, and any downstream
+      // index/report that has cached the original kind. If a callsite
+      // legitimately needs to re-kind, it should create a new issue and
+      // migrate children explicitly.
+      if (issueData.kind !== undefined && issueData.kind !== existing.kind) {
+        throw unprocessable("Issue kind cannot be changed after creation", {
+          code: "invalid_issue_kind",
+          existingKind: existing.kind,
+          attemptedKind: issueData.kind,
+        });
+      }
+      // Drop the field even when it matches `existing.kind` so it never
+      // reaches the patch below.
+      delete issueData.kind;
 
       if (issueData.status) {
         assertTransition(existing.status, issueData.status);

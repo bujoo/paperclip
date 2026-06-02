@@ -29,12 +29,83 @@ services:
       PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
       PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:-http://localhost:3100}"
       BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}"
+      PAPERCLIP_MQTT_BROKER_URL: "${PAPERCLIP_MQTT_BROKER_URL:-mqtt://emqx:1883}"
+      # Secret used by server/src/mqtt/auth-backend.ts to derive per-agent
+      # MQTT passwords (HMAC over agent_api_keys.keyHash). Falls back to
+      # BETTER_AUTH_SECRET inside the backend if unset; we set it explicitly
+      # to make the dependency visible.
+      PAPERCLIP_MQTT_AUTH_SECRET: "${PAPERCLIP_MQTT_AUTH_SECRET:-${BETTER_AUTH_SECRET}}"
+      # Shared password for the host singleton's own MQTT connection. The
+      # auth backend recognises username `host:paperclip-server` and
+      # validates this value. For local dev set
+      # PAPERCLIP_MQTT_ALLOW_ANONYMOUS_HOST=true instead.
+      PAPERCLIP_MQTT_HOST_PASSWORD: "${PAPERCLIP_MQTT_HOST_PASSWORD:-paperclip-host-dev}"
+      # Shared secret enforced by `server/src/mqtt/internal-auth.ts` on
+      # /api/internal/mqtt-{auth,acl}. Only the EMQX broker sends this
+      # header (see docker/emqx/emqx.conf). In production this MUST be
+      # set; if unset in production the middleware fails closed.
+      PAPERCLIP_MQTT_INTERNAL_SECRET: "${PAPERCLIP_MQTT_INTERNAL_SECRET:-}"
     volumes:
       - paperclip-data:/paperclip
     depends_on:
       db:
         condition: service_healthy
+      # NOTE: do NOT wait for emqx here. The host MQTT client (server/src/mqtt/client.ts)
+      # uses mqtt.js with reconnect; if EMQX is slow to come up, the server simply
+      # reconnects when the broker becomes available. Waiting here would create a
+      # depends_on cycle because emqx now waits for `server` to be reachable for its
+      # auth/ACL callbacks (see the emqx service below).
+
+  # EMQX broker for the A2A-over-MQTT transport (Phase 1.5).
+  # Enterprise trial is used so the built-in A2A Registry is available; the
+  # same topic model works on Community Edition if a license becomes a
+  # blocker (fall back to image: emqx/emqx:5.x).
+  emqx:
+    image: emqx/emqx-enterprise:6.2.0
+    container_name: paperclip-emqx
+    ports:
+      - "1883:1883"    # MQTT TCP
+      - "8883:8883"    # MQTT TLS
+      - "8083:8083"    # MQTT over WebSocket
+      - "8084:8084"    # MQTT over WebSocket TLS
+      - "18083:18083"  # Dashboard
+    environment:
+      EMQX_NAME: "paperclip-emqx"
+      EMQX_HOST: "127.0.0.1"
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: "public"
+      # Interpolated into emqx.conf to authenticate EMQX's HTTP callbacks
+      # to the server's /api/internal/mqtt-{auth,acl} endpoints.
+      PAPERCLIP_MQTT_INTERNAL_SECRET: "${PAPERCLIP_MQTT_INTERNAL_SECRET:-}"
+    volumes:
+      - emqx_data:/opt/emqx/data
+      - emqx_log:/opt/emqx/log
+      # HOCON config wiring HTTP authn + authz to the server's callback routes
+      # (see docker/emqx/emqx.conf). Mounted read-only.
+      - ./emqx/emqx.conf:/opt/emqx/etc/emqx.conf:ro
+    extra_hosts:
+      # Local-dev path: the server runs on the host via `pnpm dev` and
+      # listens on the host's :3100. EMQX-in-docker reaches it through
+      # the host gateway. Docker Desktop on macOS auto-resolves
+      # host.docker.internal; on Linux this explicit mapping is required.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      # In docker-compose-only deploys (server in container), the auth/ACL
+      # callbacks hit http://server:3100 via the compose network DNS. In
+      # local dev with `pnpm dev`, EMQX reaches the host server via
+      # host.docker.internal:3100 (see extra_hosts + emqx.conf). The
+      # `server` dependency is enforced only when the server container
+      # is actually being brought up.
+      server:
+        condition: service_started
+        required: false
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
 volumes:
   pgdata:
   paperclip-data:
+  emqx_data:
+  emqx_log:

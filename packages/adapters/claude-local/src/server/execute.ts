@@ -383,11 +383,25 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       );
     }
   }
+  // Phase 1.9 / 1.13 — Company DNA + neighbourhood snapshot prefix injection.
+  // The host populates `config.companyDnaMarkdown` (and `config.dnaGeneration`
+  // for cache keying) from either the latest DNA envelope alone (Phase 1.9)
+  // or the rendered neighbourhood snapshot (Phase 1.13, which embeds the DNA
+  // + circle peers + recent broadcasts + unconsumed perceptions). The cache
+  // also keys on `config.paperclipNeighbourhoodHash` so a fresh perception
+  // invalidates the cached prompt even when `dnaGeneration` hasn't moved.
+  const companyDnaMarkdown = asString(config.companyDnaMarkdown, "").trim() || null;
+  const dnaGeneration = asNumber(config.dnaGeneration, NaN);
+  const neighbourhoodHash =
+    asString(config.paperclipNeighbourhoodHash, "").trim() || null;
   const promptBundle = await prepareClaudePromptBundle({
     companyId: agent.companyId,
     skills: claudeSkillEntries.filter((entry) => desiredSkillNames.has(entry.key)),
     instructionsContents: combinedInstructionsContents,
     onLog,
+    companyDnaMarkdown,
+    dnaGeneration: Number.isFinite(dnaGeneration) ? dnaGeneration : null,
+    neighbourhoodHash,
   });
 
   const mcpServerStdio = path.resolve(__moduleDir, "..", "..", "..", "..", "mcp-server", "src", "stdio.ts");

@@ -138,6 +138,11 @@ import { environmentService } from "./environments.js";
 import { environmentRuntimeService } from "./environment-runtime.js";
 import { environmentRunOrchestrator } from "./environment-run-orchestrator.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
+import {
+  buildNeighbourhoodSnapshot,
+  renderNeighbourhoodMarkdown,
+  type NeighbourhoodSnapshot,
+} from "../mqtt/neighbourhood.js";
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
 const MAX_PERSISTED_LOG_CHUNK_CHARS = 64 * 1024;
@@ -5353,7 +5358,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       runScopedMentionedSkillKeys,
     );
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
-    let runtimeConfig = {
+    let runtimeConfig: Record<string, unknown> = {
       ...effectiveResolvedConfig,
       paperclipRuntimeSkills: runtimeSkillEntries,
     };
@@ -5683,6 +5688,79 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       delete context.paperclipSessionHandoffMarkdown;
       delete context.paperclipSessionRotationReason;
       delete context.paperclipPreviousSessionId;
+    }
+
+    // Phase 1.13 — Eyes (peripheral awareness). Compose a snapshot of the
+    // agent's neighbourhood (company DNA + circle peers + recent broadcasts
+    // + unconsumed perceptions) and surface it both as structured context
+    // for downstream consumers and as a markdown block for adapters that
+    // prepend it to the system prompt. Side-effect: `consumePerceptions`
+    // marks unconsumed perceptions as consumed so they're surfaced exactly
+    // once.
+    let neighbourhoodSnapshot: NeighbourhoodSnapshot | null = null;
+    try {
+      neighbourhoodSnapshot = await buildNeighbourhoodSnapshot(db, agent.id);
+    } catch (err) {
+      logger.warn(
+        { err, agentId: agent.id, runId: run.id },
+        "heartbeat: neighbourhood snapshot assembly failed; continuing without",
+      );
+    }
+    if (neighbourhoodSnapshot) {
+      context.paperclipNeighbourhoodSnapshot = neighbourhoodSnapshot;
+      try {
+        const markdown = renderNeighbourhoodMarkdown(neighbourhoodSnapshot);
+        context.paperclipNeighbourhoodMarkdown = markdown;
+        context.paperclipNeighbourhoodHash = neighbourhoodSnapshot.contentHash;
+        // Phase 1.9 — populate the DNA prefix that claude-local's prompt
+        // cache already understands. We prefer the snapshot markdown because
+        // it carries DNA + neighbours + perceptions in one block, but
+        // claude-local treats anything in `companyDnaMarkdown` as the prefix
+        // contents to prepend to the instructions, so we route the rendered
+        // snapshot through that same channel and key its cache on the
+        // snapshot hash.
+        runtimeConfig.companyDnaMarkdown = markdown;
+        runtimeConfig.dnaGeneration = neighbourhoodSnapshot.dna?.generation ?? 0;
+        runtimeConfig.paperclipNeighbourhoodHash = neighbourhoodSnapshot.contentHash;
+      } catch (err) {
+        logger.warn(
+          { err, agentId: agent.id, runId: run.id },
+          "heartbeat: neighbourhood markdown render failed; continuing without",
+        );
+      }
+    } else {
+      delete context.paperclipNeighbourhoodSnapshot;
+      delete context.paperclipNeighbourhoodMarkdown;
+      delete context.paperclipNeighbourhoodHash;
+    }
+
+    // Phase 1.15h-a — hermes_local task injection. hermes-paperclip-adapter's
+    // buildPrompt() reads taskId/taskTitle/taskBody from ctx.config.* — not from
+    // ctx.context. Surface the assigned issue via runtimeConfig so hermes's
+    // {{#taskId}} template branch activates and it actually executes assigned
+    // turn issues (otherwise it falls through to {{#noTask}} heartbeat mode
+    // and returns "No unassigned backlog. Standby.").
+    if (agent.adapterType === "hermes_local") {
+      const issueIdForTask = readNonEmptyString(context.issueId);
+      if (issueIdForTask) {
+        try {
+          const [taskIssue] = await db
+            .select({ title: issues.title, description: issues.description })
+            .from(issues)
+            .where(and(eq(issues.id, issueIdForTask), eq(issues.companyId, agent.companyId)))
+            .limit(1);
+          if (taskIssue) {
+            runtimeConfig.taskId = issueIdForTask;
+            runtimeConfig.taskTitle = taskIssue.title ?? "";
+            runtimeConfig.taskBody = taskIssue.description ?? "";
+          }
+        } catch (err) {
+          logger.warn(
+            { err, agentId: agent.id, runId: run.id, issueId: issueIdForTask },
+            "heartbeat: hermes task injection failed; continuing without",
+          );
+        }
+      }
     }
 
     const runtimeForAdapter = {
@@ -8010,6 +8088,96 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         else skipped += 1;
       }
 
+      return { checked, enqueued, skipped };
+    },
+
+    /**
+     * Phase 1.15b — wake agents on discussion-turn perceptions.
+     *
+     * Scans `agent_perceptions` for rows with `wake_eligible=true AND
+     * wake_processed_at IS NULL` (already de-duped at the inbound handler
+     * by idempotency_key). Per-agent rate limit: max 4 discussion-wakes/hour.
+     * On enqueue, stamp `wake_processed_at` so we don't re-fire.
+     */
+    wakeOnDiscussionPerceptions: async (now = new Date()) => {
+      let checked = 0;
+      let enqueued = 0;
+      let skipped = 0;
+      const rateLimitPerHour = 4;
+      try {
+        interface Row extends Record<string, unknown> {
+          id: string;
+          agentId: string;
+          topic: string;
+        }
+        const rows = (await db.execute<Row>(sql`
+          SELECT id::text AS "id", agent_id::text AS "agentId", topic
+            FROM public.agent_perceptions
+           WHERE wake_eligible = true
+             AND wake_processed_at IS NULL
+           ORDER BY received_at ASC
+           LIMIT 100
+        `)) as unknown as { rows: Row[] } | Row[];
+        const list: Row[] = Array.isArray(rows) ? rows : rows.rows ?? [];
+        const perAgentRecentCount = new Map<string, number>();
+        for (const row of list) {
+          checked += 1;
+          const recent = perAgentRecentCount.get(row.agentId);
+          if (recent === undefined) {
+            const countRows = (await db.execute<{ c: number }>(sql`
+              SELECT COUNT(*)::int AS c
+                FROM public.agent_perceptions
+               WHERE agent_id = ${row.agentId}::uuid
+                 AND wake_processed_at IS NOT NULL
+                 AND wake_processed_at > NOW() - INTERVAL '1 hour'
+            `)) as unknown as { rows: Array<{ c: number }> } | Array<{ c: number }>;
+            const cl: Array<{ c: number }> = Array.isArray(countRows) ? countRows : countRows.rows ?? [];
+            perAgentRecentCount.set(row.agentId, cl[0]?.c ?? 0);
+          }
+          const used = perAgentRecentCount.get(row.agentId) ?? 0;
+          if (used >= rateLimitPerHour) {
+            skipped += 1;
+            // Still mark processed so we don't keep recounting it.
+            await db.execute(sql`
+              UPDATE public.agent_perceptions
+                 SET wake_processed_at = NOW()
+               WHERE id = ${row.id}::uuid
+            `);
+            continue;
+          }
+          try {
+            const run = await enqueueWakeup(row.agentId, {
+              source: "timer",
+              triggerDetail: "system",
+              reason: "discussion_turn_perception",
+              requestedByActorType: "system",
+              requestedByActorId: "discussion_scheduler",
+              contextSnapshot: {
+                source: "scheduler",
+                reason: "discussion_turn_received",
+                topic: row.topic,
+                now: now.toISOString(),
+              },
+            });
+            if (run) {
+              enqueued += 1;
+              perAgentRecentCount.set(row.agentId, used + 1);
+            } else {
+              skipped += 1;
+            }
+          } catch {
+            skipped += 1;
+          }
+          // Stamp processed regardless to avoid retry storms.
+          await db.execute(sql`
+            UPDATE public.agent_perceptions
+               SET wake_processed_at = NOW()
+             WHERE id = ${row.id}::uuid
+          `);
+        }
+      } catch {
+        // ignore — discussion wake is best-effort
+      }
       return { checked, enqueued, skipped };
     },
 

@@ -242,6 +242,12 @@ export interface PluginDatabaseDeclaration {
   migrationsDir: string;
   /** Public core tables this plugin may read or join at runtime. */
   coreReadTables?: PluginDatabaseCoreReadTable[];
+  /** Public core tables this plugin may also write to (INSERT/UPDATE/DELETE) at
+   *  runtime via `ctx.db.execute`. Phase 1.14 introduced co-managed tables like
+   *  `circle_discussions` whose writes are scoped to a known plugin. Be careful:
+   *  this bypasses the namespace boundary. Names must be in the allow-list
+   *  enforced server-side. */
+  coreWriteTables?: string[];
 }
 
 export type PluginApiRouteCompanyResolution =

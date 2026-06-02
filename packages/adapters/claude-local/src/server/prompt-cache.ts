@@ -86,6 +86,9 @@ async function hashPathContents(
 async function buildClaudePromptBundleKey(input: {
   skills: SkillEntry[];
   instructionsContents: string | null;
+  companyDnaMarkdown?: string | null;
+  dnaGeneration?: number | null;
+  neighbourhoodHash?: string | null;
 }): Promise<string> {
   const hash = createHash("sha256");
   hash.update("paperclip-claude-prompt-bundle:v1\n");
@@ -95,6 +98,20 @@ async function buildClaudePromptBundleKey(input: {
     hash.update("\n");
   } else {
     hash.update("instructions:none\n");
+  }
+  // Phase 1.9 — hash on DNA so a generation bump invalidates the cache.
+  if (input.dnaGeneration !== null && input.dnaGeneration !== undefined) {
+    hash.update(`dna-generation:${input.dnaGeneration}\n`);
+  }
+  if (input.companyDnaMarkdown) {
+    hash.update("dna-markdown\n");
+    hash.update(input.companyDnaMarkdown);
+    hash.update("\n");
+  }
+  // Phase 1.13 — hash on neighbourhood snapshot hash so a fresh perception
+  // invalidates the cache even when the DNA generation hasn't moved.
+  if (input.neighbourhoodHash) {
+    hash.update(`neighbourhood-hash:${input.neighbourhoodHash}\n`);
   }
 
   const sortedSkills = [...input.skills].sort((left, right) => left.runtimeName.localeCompare(right.runtimeName));
@@ -134,11 +151,30 @@ export async function prepareClaudePromptBundle(input: {
   skills: SkillEntry[];
   instructionsContents: string | null;
   onLog: AdapterExecutionContext["onLog"];
+  /** Phase 1.9 — Company DNA markdown to prepend to the instructions. */
+  companyDnaMarkdown?: string | null;
+  /** Phase 1.9 — DNA generation counter; cache key is hashed on this. */
+  dnaGeneration?: number | null;
+  /** Phase 1.13 — neighbourhood snapshot hash; cache key is hashed on this
+   *  so a fresh perception or DNA mutation invalidates the cache even when
+   *  the DNA generation hasn't moved. */
+  neighbourhoodHash?: string | null;
 }): Promise<ClaudePromptBundle> {
-  const { companyId, skills, instructionsContents, onLog } = input;
+  const { companyId, skills, instructionsContents, onLog, companyDnaMarkdown, dnaGeneration, neighbourhoodHash } = input;
+  // Prepend DNA markdown to instructions when present. The resulting blob is
+  // what the agent actually reads via --append-system-prompt-file.
+  const effectiveInstructions =
+    companyDnaMarkdown && companyDnaMarkdown.trim().length > 0
+      ? (instructionsContents
+        ? `${companyDnaMarkdown.trim()}\n\n---\n\n${instructionsContents}`
+        : companyDnaMarkdown.trim())
+      : instructionsContents;
   const bundleKey = await buildClaudePromptBundleKey({
     skills,
-    instructionsContents,
+    instructionsContents: effectiveInstructions,
+    companyDnaMarkdown: companyDnaMarkdown ?? null,
+    dnaGeneration: dnaGeneration ?? null,
+    neighbourhoodHash: neighbourhoodHash ?? null,
   });
   const rootDir = path.join(resolveManagedClaudePromptCacheRoot(process.env, companyId), bundleKey);
   const skillsHome = path.join(rootDir, ".claude", "skills");
@@ -156,11 +192,11 @@ export async function prepareClaudePromptBundle(input: {
     }
   }
 
-  const instructionsFilePath = instructionsContents
+  const instructionsFilePath = effectiveInstructions
     ? path.join(rootDir, "agent-instructions.md")
     : null;
-  if (instructionsFilePath && instructionsContents) {
-    await ensureReadableFile(instructionsFilePath, instructionsContents);
+  if (instructionsFilePath && effectiveInstructions) {
+    await ensureReadableFile(instructionsFilePath, effectiveInstructions);
   }
 
   return {

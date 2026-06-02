@@ -22,6 +22,7 @@
 
 import type { PluginEventType } from "@paperclipai/shared";
 import type { PluginEvent, EventFilter } from "@paperclipai/plugin-sdk";
+import { publishEventToMqtt } from "../mqtt/bridge.js";
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -194,6 +195,15 @@ export function createPluginEventBus(): PluginEventBus {
     }
 
     await Promise.all(promises);
+
+    // Forward the event to the A2A MQTT bridge after in-process plugin
+    // handlers have run. Fire-and-forget — broker latency must never block
+    // domain events. The bridge filters internally, so most events are
+    // dropped without a broker round-trip.
+    void publishEventToMqtt(event).catch(() => {
+      // bridge logs its own errors; swallow here to keep the bus contract clean.
+    });
+
     return { errors };
   }
 

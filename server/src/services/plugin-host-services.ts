@@ -52,6 +52,11 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { logger } from "../middleware/logger.js";
 import { getTelemetryClient } from "../telemetry.js";
+import * as mqttHostClient from "../mqtt/client.js";
+import type { MqttSubscriptionHandle } from "../mqtt/client.js";
+import * as perAgentClientManager from "../mqtt/per-agent-client-manager.js";
+import { reconcileAgentRuntimeSubscriptions } from "../mqtt/agent-runtime-bridge.js";
+import { invalidateAclCache } from "../mqtt/acl-backend.js";
 
 // ---------------------------------------------------------------------------
 // SSRF protection for plugin HTTP fetch
@@ -486,6 +491,9 @@ export function buildHostServices(
 
   // Track active session event subscriptions for cleanup
   const activeSubscriptions = new Set<{ unsubscribe: () => void; timer: ReturnType<typeof setTimeout> }>();
+  // Track active MQTT subscriptions owned by this plugin so we can release
+  // them on dispose() — otherwise they leak past worker restart cycles.
+  const activeMqttSubscriptions: MqttSubscriptionHandle[] = [];
   let disposed = false;
 
   const ensureCompanyId = (companyId?: string) => {
@@ -816,6 +824,112 @@ export function buildHostServices(
           scopedBus.subscribe(params.eventPattern as any, params.filter as any, handler);
         } else {
           scopedBus.subscribe(params.eventPattern as any, handler);
+        }
+      },
+    },
+
+    mqtt: {
+      // Wired in round 2 — RPC to the host singleton from `server/src/mqtt/client.ts`.
+      // Capability checks (`mqtt.publish` / `mqtt.subscribe`) are enforced by the
+      // SDK's `createHostClientHandlers` before this handler runs.
+      async publish(params) {
+        const payload =
+          typeof params.payload === "string" && /^[A-Za-z0-9+/=_-]+$/.test(params.payload)
+            ? // The SDK base64-encodes binary payloads. If the worker passed a
+              // base64 string, hand it through unchanged; otherwise JSON/string.
+              params.payload
+            : params.payload;
+        const correlationData = params.correlationData
+          ? Buffer.from(params.correlationData, "base64")
+          : undefined;
+        await mqttHostClient.publish(params.topic, payload, {
+          qos: params.qos,
+          retain: params.retain,
+          responseTopic: params.responseTopic,
+          correlationData,
+          userProperties: params.userProperties,
+        });
+      },
+      async publishAs(params) {
+        const payload =
+          typeof params.payload === "string" && /^[A-Za-z0-9+/=_-]+$/.test(params.payload)
+            ? params.payload
+            : params.payload;
+        const correlationData = params.correlationData
+          ? Buffer.from(params.correlationData, "base64")
+          : undefined;
+        await perAgentClientManager.publishAs(
+          params.agentId,
+          params.topic,
+          payload,
+          {
+            qos: params.qos,
+            retain: params.retain,
+            responseTopic: params.responseTopic,
+            correlationData,
+            userProperties: params.userProperties,
+          },
+        );
+      },
+      async subscribe(params) {
+        const effectivePattern = params.sharedGroup
+          ? `$share/${params.sharedGroup}/${params.topicPattern}`
+          : params.topicPattern;
+        const handle = await mqttHostClient.subscribe(effectivePattern, (msg) => {
+          if (!notifyWorker) return;
+          // Mirror the host→worker `mqtt.message` envelope expected by
+          // `worker-rpc-host.ts:handleMqttMessage`.
+          notifyWorker("mqtt.message", {
+            topicPattern: params.topicPattern,
+            topic: msg.topic,
+            payload: msg.payload.toString("base64"),
+            qos: 1,
+            retain: msg.retain,
+            responseTopic: msg.responseTopic ?? undefined,
+            correlationData: msg.correlationData
+              ? msg.correlationData.toString("base64")
+              : undefined,
+            userProperties: msg.userProperties,
+          });
+        });
+        activeMqttSubscriptions.push(handle);
+      },
+      async unsubscribe(params) {
+        // Look up the active subscription by its effective topic pattern
+        // (matching the rewrite applied in `subscribe()` above). The SDK
+        // already ref-counts so we expect a 1:1 correspondence here; if
+        // the entry is missing the caller's bookkeeping is desynced and
+        // we throw — the worker-side wrapper logs and continues.
+        const effectivePattern = params.sharedGroup
+          ? `$share/${params.sharedGroup}/${params.topicPattern}`
+          : params.topicPattern;
+        const idx = activeMqttSubscriptions.findIndex(
+          (h) => h.topicPattern === effectivePattern,
+        );
+        if (idx === -1) {
+          throw new Error(
+            `mqtt.unsubscribe: no active subscription for "${effectivePattern}"`,
+          );
+        }
+        const [handle] = activeMqttSubscriptions.splice(idx, 1);
+        await handle!.unsubscribe();
+      },
+      // Phase 1.15h-f — force a per-agent MQTT subscription recompute. The
+      // host re-runs `computeDesiredSubscriptions(db, agentId)` and reconciles
+      // add/remove against the agent's connected client. Best-effort: no-op
+      // if the agent isn't connected yet. ALSO invalidates the per-agent ACL
+      // cache so any newly-permitted topics (e.g. fresh discussion contextIds)
+      // are honored on the next SUBSCRIBE — without this, cached negative ACL
+      // results block the subscribe even after reconcile picks the topic.
+      async reconcileAgent(params) {
+        try {
+          invalidateAclCache(params.agentId);
+          await reconcileAgentRuntimeSubscriptions(params.agentId);
+        } catch (err) {
+          logger.warn(
+            { err, agentId: params.agentId },
+            "plugin-host-services: mqtt.reconcileAgent failed",
+          );
         }
       },
     },
@@ -1933,6 +2047,16 @@ export function buildHostServices(
       for (const entry of snapshot) {
         clearTimeout(entry.timer);
         entry.unsubscribe();
+      }
+
+      // Release MQTT subscriptions owned by this plugin. Each unsubscribe is
+      // async; we kick them all off and swallow errors so worker shutdown
+      // doesn't block on a flaky broker.
+      const mqttSnapshot = activeMqttSubscriptions.splice(0, activeMqttSubscriptions.length);
+      for (const handle of mqttSnapshot) {
+        void handle.unsubscribe().catch((err) => {
+          logger.warn({ err, pluginId, topicPattern: handle.topicPattern }, "plugin mqtt unsubscribe failed");
+        });
       }
 
       // Flush any buffered log entries synchronously-as-possible on dispose.

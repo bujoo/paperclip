@@ -43,6 +43,18 @@ if (!isSameFile && existsSync(CWD_ENV_PATH)) {
   loadDotenv({ path: CWD_ENV_PATH, override: false, quiet: true });
 }
 
+// Monorepo workspace fallback: `pnpm --filter @paperclipai/server` changes
+// cwd into `server/`, so the repo-root `.env` (one level up) is missed by
+// the CWD lookup above.
+const PARENT_CWD_ENV_PATH = resolve(process.cwd(), "..", ".env");
+const parentIsAlreadyLoaded =
+  existsSync(PARENT_CWD_ENV_PATH) &&
+  (realpathSync(PARENT_CWD_ENV_PATH) === (existsSync(CWD_ENV_PATH) ? realpathSync(CWD_ENV_PATH) : "") ||
+    (existsSync(PAPERCLIP_ENV_FILE_PATH) && realpathSync(PARENT_CWD_ENV_PATH) === realpathSync(PAPERCLIP_ENV_FILE_PATH)));
+if (!parentIsAlreadyLoaded && existsSync(PARENT_CWD_ENV_PATH)) {
+  loadDotenv({ path: PARENT_CWD_ENV_PATH, override: false, quiet: true });
+}
+
 maybeRepairLegacyWorktreeConfigAndEnvFiles();
 
 const TAILSCALE_DETECT_TIMEOUT_MS = 3000;

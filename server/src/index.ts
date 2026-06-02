@@ -43,6 +43,25 @@ import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { initTelemetry, getTelemetryClient } from "./telemetry.js";
+import { initMqtt, shutdownMqtt } from "./mqtt/client.js";
+import {
+  wireAgentCardProjector,
+  backfillAgentCardsOnBootstrap,
+} from "./mqtt/agent-card-projector.js";
+import {
+  initHeartbeatBridge,
+  shutdownHeartbeatBridge,
+  publishHeartbeatToMqtt,
+} from "./mqtt/heartbeat-bridge.js";
+import { initDnaProjector, shutdownDnaProjector } from "./mqtt/dna-projector.js";
+import {
+  initPerAgentClientManager,
+  shutdownPerAgentClientManager,
+} from "./mqtt/per-agent-client-manager.js";
+import {
+  wireAgentRuntimeBridge,
+  shutdownAgentRuntimeBridge,
+} from "./mqtt/agent-runtime-bridge.js";
 import { conflict } from "./errors.js";
 import type {
   InstanceDatabaseBackupRunResult,
@@ -592,6 +611,15 @@ export async function startServer(): Promise<StartedServer> {
       databaseBackupInFlight = false;
     }
   };
+  // Phase 1.6-bis: MQTT bootstrap moved AFTER server.listen() below. The
+  // chicken-and-egg: EMQX's HTTP auth/ACL callbacks target the server's
+  // /api/internal/mqtt-{auth,acl} routes. If MQTT init runs before listen(),
+  // EMQX gets econnrefused on every callback, returns not_authorized, the
+  // host singleton + per-agent clients spin forever, and listen() is never
+  // reached. We mount the projector wiring here (no broker traffic) but
+  // defer everything that touches the broker until after listen().
+  wireAgentCardProjector(db as any);
+
   const pluginWorkerManager = createPluginWorkerManager();
   const app = await createApp(db as any, {
     uiMode,
@@ -727,6 +755,18 @@ export async function startServer(): Promise<StartedServer> {
           logger.error({ err }, "heartbeat timer tick failed");
         });
 
+      // Phase 1.15b — wake on discussion-turn perceptions.
+      void heartbeat
+        .wakeOnDiscussionPerceptions(new Date())
+        .then((result) => {
+          if (result.enqueued > 0) {
+            logger.info({ ...result }, "discussion-wake tick enqueued runs");
+          }
+        })
+        .catch((err) => {
+          logger.error({ err }, "discussion-wake tick failed");
+        });
+
       void routines
         .tickScheduledTriggers(new Date())
         .then((result) => {
@@ -776,6 +816,12 @@ export async function startServer(): Promise<StartedServer> {
           if (reviewed.created > 0 || reviewed.updated > 0 || reviewed.failed > 0) {
             logger.warn({ ...reviewed }, "periodic productivity reconciliation created or updated review work");
           }
+        })
+        .then(async () => {
+          // Phase 1.8 — publish per-company heartbeat snapshot to MQTT.
+          // The exact recovery counts vary per tick branch; the bridge tolerates
+          // missing fields and aggregates the rest from the DB.
+          await publishHeartbeatToMqtt({}, db as any);
         })
         .catch((err) => {
           logger.error({ err }, "periodic heartbeat recovery failed");
@@ -867,13 +913,80 @@ export async function startServer(): Promise<StartedServer> {
       resolveListen();
     });
   });
-  
+
+  // Phase 1.6-bis: MQTT bootstrap runs AFTER server.listen() so EMQX's HTTP
+  // auth/ACL callbacks have a target. Fire-and-forget — failures don't kill
+  // the server, just log and let mqtt.js's reconnect loop catch up.
+  void (async () => {
+    try {
+      await initMqtt();
+    } catch (err) {
+      logger.warn({ err }, "MQTT host singleton init failed; continuing without A2A transport");
+    }
+    try {
+      await backfillAgentCardsOnBootstrap(db as any);
+    } catch (err) {
+      logger.warn({ err }, "agent-card-projector bootstrap backfill failed");
+    }
+    try {
+      await initPerAgentClientManager(db as any);
+    } catch (err) {
+      logger.warn({ err }, "per-agent-client-manager init failed; continuing without per-agent connections");
+    }
+    try {
+      await wireAgentRuntimeBridge(db as any);
+    } catch (err) {
+      logger.warn({ err }, "Agent runtime bridge wiring failed; A2A request bridging disabled");
+    }
+    try {
+      await initHeartbeatBridge(db as any);
+    } catch (err) {
+      logger.warn({ err }, "Heartbeat bridge wiring failed; MQTT heartbeat disabled");
+    }
+    try {
+      await initDnaProjector(db as any);
+    } catch (err) {
+      logger.warn({ err }, "DNA projector wiring failed; retained DNA disabled");
+    }
+  })();
+
+
   {
     const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
       const telemetryClient = getTelemetryClient();
       if (telemetryClient) {
         telemetryClient.stop();
         await telemetryClient.flush();
+      }
+
+      try {
+        await shutdownPerAgentClientManager();
+      } catch (err) {
+        logger.warn({ err }, "Per-agent client manager shutdown failed");
+      }
+
+      try {
+        await shutdownAgentRuntimeBridge();
+      } catch (err) {
+        logger.warn({ err }, "Agent runtime bridge shutdown failed");
+      }
+
+      try {
+        await shutdownHeartbeatBridge();
+      } catch (err) {
+        logger.warn({ err }, "Heartbeat bridge shutdown failed");
+      }
+
+      try {
+        await shutdownDnaProjector();
+      } catch (err) {
+        logger.warn({ err }, "DNA projector shutdown failed");
+      }
+
+      try {
+        await shutdownMqtt();
+      } catch (err) {
+        logger.warn({ err }, "MQTT shutdown failed");
       }
 
       if (embeddedPostgres && embeddedPostgresStartedByThisProcess) {

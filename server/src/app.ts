@@ -40,6 +40,12 @@ import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { adapterRoutes } from "./routes/adapters.js";
+import { mqttAuthRoutes } from "./mqtt/auth-backend.js";
+import { mqttAclRoutes } from "./mqtt/acl-backend.js";
+import { requireMqttInternalAuth } from "./mqtt/internal-auth.js";
+import { backfillAgentCardsOnBootstrap } from "./mqtt/agent-card-projector.js";
+import { getHostSingletonDiagnostics, isMqttInitialised } from "./mqtt/client.js";
+import * as perAgentClientManager from "./mqtt/per-agent-client-manager.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
@@ -282,6 +288,43 @@ export async function createApp(
     ),
   );
   api.use(adapterRoutes());
+  // EMQX HTTP Auth + ACL callbacks (mounted under /api → /api/internal/mqtt-auth, /api/internal/mqtt-acl).
+  // These endpoints are called by the broker on every CONNECT. The
+  // `requireMqttInternalAuth()` middleware enforces a shared-secret header
+  // (`X-Paperclip-Mqtt-Internal-Secret` against PAPERCLIP_MQTT_INTERNAL_SECRET)
+  // so that even though the routes live under /api, only the broker (which
+  // sends the header) can reach them. In production, deployments should ALSO
+  // restrict /api/internal/* at the proxy layer to the broker's source IP.
+  api.use("/internal/mqtt-auth", requireMqttInternalAuth());
+  api.use("/internal/mqtt-acl", requireMqttInternalAuth());
+  api.use("/internal/mqtt", requireMqttInternalAuth());
+  api.use(mqttAuthRoutes(db));
+  api.use(mqttAclRoutes(db));
+  // Phase 1.10 — ops endpoint to force re-projection of every retained Agent
+  // Card. Useful after broker restarts, schema migrations, or any other
+  // situation where the retained discovery topic has drifted from DB truth.
+  api.post("/internal/mqtt/reproject-all", async (_req, res) => {
+    try {
+      const result = await backfillAgentCardsOnBootstrap(db);
+      res.status(200).json({ ok: true, ...result });
+    } catch (err) {
+      logger.warn({ err }, "POST /internal/mqtt/reproject-all failed");
+      res.status(500).json({ ok: false, error: "reproject failed" });
+    }
+  });
+  // Phase 1.11 — stats endpoint for the per-agent MQTT client manager.
+  api.get("/internal/mqtt/stats", (_req, res) => {
+    const host = getHostSingletonDiagnostics();
+    res.status(200).json({
+      hostSingleton: {
+        initialised: isMqttInitialised(),
+        connected: host.connected,
+        brokerUrl: host.brokerUrl,
+      },
+      perAgent: perAgentClientManager.getStats(),
+      mode: perAgentClientManager.mode(),
+    });
+  });
   api.use(
     accessRoutes(db, {
       deploymentMode: opts.deploymentMode,

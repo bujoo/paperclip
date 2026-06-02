@@ -624,6 +624,10 @@ export const PLUGIN_CAPABILITIES = [
   // Runtime / Integration
   "events.subscribe",
   "events.emit",
+  "mqtt.publish",
+  "mqtt.publishAs",
+  "mqtt.subscribe",
+  "mqtt.unsubscribe",
   "jobs.schedule",
   "webhooks.receive",
   "api.routes.register",
@@ -909,6 +913,11 @@ export const PLUGIN_EVENT_TYPES = [
   "budget.incident.resolved",
   "cost_event.created",
   "activity.logged",
+  // Phase 1.8 — Heartbeat externalization
+  "issue.harness_liveness_escalation",
+  "heartbeat.watchdog_decision",
+  // Phase 1.9 — Company DNA
+  "company.dna.mutated",
 ] as const;
 export type PluginEventType = (typeof PLUGIN_EVENT_TYPES)[number];
 

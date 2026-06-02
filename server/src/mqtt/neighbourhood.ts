@@ -79,6 +79,11 @@ export interface ActiveDiscussionEntry {
   awaitingYou: boolean;
   contextId: string;
   startedAt: string;
+  /** T2 (Phase 1.15h-l) — the circle this discussion belongs to, so agents
+   *  can pass it as `circleId` to raiseTension / broadcast etc. without
+   *  having to derive it from elsewhere. */
+  circleId: string;
+  circleName: string | null;
 }
 
 export interface TrustSignalEntry {
@@ -331,24 +336,29 @@ async function loadActiveDiscussions(
       participantAgentIds: string[];
       contextId: string;
       startedAt: string;
+      circleId: string;
+      circleName: string | null;
     }
     const rows = await db.execute<Row>(sql`
       SELECT
-        id::text                    AS "id",
-        topic                       AS "topic",
-        speaker_mode                AS "speakerMode",
-        rounds_planned              AS "roundsPlanned",
-        rounds_completed            AS "roundsCompleted",
-        phase                       AS "phase",
-        current_speaker_idx         AS "currentSpeakerIdx",
-        speaker_order               AS "speakerOrder",
-        participant_agent_ids       AS "participantAgentIds",
-        a2a_context_id              AS "contextId",
-        started_at::text            AS "startedAt"
-      FROM public.circle_discussions
-      WHERE status = 'open'
-        AND ${agentId}::uuid = ANY(participant_agent_ids)
-      ORDER BY started_at DESC
+        d.id::text                    AS "id",
+        d.topic                       AS "topic",
+        d.speaker_mode                AS "speakerMode",
+        d.rounds_planned              AS "roundsPlanned",
+        d.rounds_completed            AS "roundsCompleted",
+        d.phase                       AS "phase",
+        d.current_speaker_idx         AS "currentSpeakerIdx",
+        d.speaker_order               AS "speakerOrder",
+        d.participant_agent_ids       AS "participantAgentIds",
+        d.a2a_context_id              AS "contextId",
+        d.started_at::text            AS "startedAt",
+        d.circle_id::text             AS "circleId",
+        c.name                        AS "circleName"
+      FROM public.circle_discussions d
+      LEFT JOIN plugin_holacracy_c5049b5dfe.circles c ON c.id = d.circle_id
+      WHERE d.status = 'open'
+        AND ${agentId}::uuid = ANY(d.participant_agent_ids)
+      ORDER BY d.started_at DESC
       LIMIT ${MAX_ACTIVE_DISCUSSIONS}
     `);
     const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
@@ -373,6 +383,8 @@ async function loadActiveDiscussions(
         awaitingYou,
         contextId: r.contextId,
         startedAt: r.startedAt,
+        circleId: r.circleId,
+        circleName: r.circleName,
       };
     });
   } catch (err) {
@@ -899,14 +911,26 @@ export function renderNeighbourhoodMarkdown(snapshot: NeighbourhoodSnapshot): st
   if (snapshot.neighbours.length === 0) {
     lines.push("_(no circle neighbours)_");
   } else {
+    // T9 (Phase 1.15h-l) — Role→AgentID lookup table so an agent that
+    // decides "I'll ask the Lead Link" can find the UUID without parsing
+    // prose. Tool calls (talkToAgent / forwardTension) need full UUIDs as
+    // `toAgentId` / `targetAgentId` arguments.
+    lines.push("**Quick lookup (use these UUIDs as tool arguments):**");
     for (const n of snapshot.neighbours) {
-      const idPrefix = n.id.slice(0, 8);
-      const circle = n.circleName ? ` [in ${n.circleName}]` : "";
+      const roleLabel = n.title ? n.title : n.name;
+      lines.push(`- ${n.name} → \`${n.id}\` _(${roleLabel})_`);
+    }
+    lines.push("");
+    lines.push("**Detail:**");
+    for (const n of snapshot.neighbours) {
+      // T8 (Phase 1.15h-l) — show full UUID, not 8-char prefix. Agents need
+      // it as `toAgentId` for talk-to-agent / forward-tension tool calls.
+      const circle = n.circleName ? ` [in ${n.circleName} \`${n.circleId}\`]` : "";
       const heartbeat = n.lastHeartbeatAt
         ? ` last-seen=${n.lastHeartbeatAt}`
         : " never-seen";
       lines.push(
-        `- **${n.name}** (${idPrefix})${circle} — ${renderAccountabilities(n.accountabilities)}${heartbeat}`,
+        `- **${n.name}** \`${n.id}\`${circle} — ${renderAccountabilities(n.accountabilities)}${heartbeat}`,
       );
     }
   }
@@ -940,7 +964,9 @@ export function renderNeighbourhoodMarkdown(snapshot: NeighbourhoodSnapshot): st
   }
   lines.push("");
 
-  // Active discussions you're in (Phase 1.14)
+  // Active discussions you're in (Phase 1.14, with T1+T2 from 1.15h-l —
+  // full circleId so agents can `raiseTension`/`broadcast` against the
+  // right circle).
   lines.push(`### Active discussions you're in (${snapshot.activeDiscussions.length})`);
   if (snapshot.activeDiscussions.length === 0) {
     lines.push("_(no active discussions)_");
@@ -951,8 +977,15 @@ export function renderNeighbourhoodMarkdown(snapshot: NeighbourhoodSnapshot): st
         : d.awaitingYou
           ? " — awaiting your input"
           : "";
+      const circleLabel = d.circleName ? `${d.circleName} ` : "";
       lines.push(
         `- **${truncate(d.topic, 80)}** [${d.speakerMode}] round ${d.roundsCompleted}/${d.roundsPlanned} phase=${d.phase}${turnFlag}`,
+      );
+      lines.push(
+        `  - Circle: ${circleLabel}\`${d.circleId}\` (use as \`circleId\` arg for tools)`,
+      );
+      lines.push(
+        `  - Discussion: \`${d.id}\` · ContextId: \`${d.contextId}\``,
       );
     }
   }
@@ -982,11 +1015,13 @@ export function renderNeighbourhoodMarkdown(snapshot: NeighbourhoodSnapshot): st
   }
 
   // Circle strategies — top N most-recent active strategies per circle.
+  // T1 (Phase 1.15h-l) — show full circleId/setBy UUIDs so the agent can
+  // reference them as tool args.
   if (snapshot.strategies.length > 0) {
     lines.push("## Circle strategies");
     for (const s of snapshot.strategies) {
-      const circle = s.circleName ?? s.circleId.slice(0, 8);
-      const setBy = s.setByName ? ` — _${s.setByName}_` : s.setBy ? ` — _${s.setBy.slice(0, 8)}_` : "";
+      const circle = s.circleName ? `${s.circleName} \`${s.circleId}\`` : `\`${s.circleId}\``;
+      const setBy = s.setByName ? ` — _${s.setByName}_` : s.setBy ? ` — _\`${s.setBy}\`_` : "";
       lines.push(`- [${circle}] ${truncate(s.text, 200)}${setBy}`);
     }
     lines.push("");
@@ -996,7 +1031,7 @@ export function renderNeighbourhoodMarkdown(snapshot: NeighbourhoodSnapshot): st
   if (snapshot.metrics.length > 0) {
     lines.push("## Recent circle metrics");
     for (const m of snapshot.metrics) {
-      const circle = m.circleName ?? m.circleId.slice(0, 8);
+      const circle = m.circleName ? `${m.circleName} \`${m.circleId}\`` : `\`${m.circleId}\``;
       const unit = m.unit ? ` ${m.unit}` : "";
       const value = m.latestValue !== null ? `${m.latestValue}${unit}` : "(no value)";
       const trendStr =
@@ -1012,7 +1047,7 @@ export function renderNeighbourhoodMarkdown(snapshot: NeighbourhoodSnapshot): st
   if (snapshot.checklists.length > 0) {
     lines.push("## Recent checklist outcomes");
     for (const c of snapshot.checklists) {
-      const circle = c.circleName ?? c.circleId.slice(0, 8);
+      const circle = c.circleName ? `${c.circleName} \`${c.circleId}\`` : `\`${c.circleId}\``;
       const period = c.latestPeriod ? ` (period ${c.latestPeriod})` : "";
       lines.push(`- [${circle}] ${truncate(c.itemText, 80)}: ${c.checkedCount}/${c.totalCount}${period}`);
     }
@@ -1025,9 +1060,11 @@ export function renderNeighbourhoodMarkdown(snapshot: NeighbourhoodSnapshot): st
     lines.push("_(no trust history yet — every exchange builds the file)_");
   } else {
     for (const t of snapshot.trustSignals) {
-      const name = t.trustedAgentName ?? t.trustedAgentId.slice(0, 8);
+      // T8 (Phase 1.15h-l) — show full agent UUID so the agent can use it
+      // as `toAgentId` when reaching out to a trusted peer for a skill.
+      const name = t.trustedAgentName ?? "agent";
       const ratio = `${t.successfulExchanges}/${t.failedExchanges}`;
-      lines.push(`- **${name}** — ${t.skillSlug} (${ratio} successes/failures)`);
+      lines.push(`- **${name}** \`${t.trustedAgentId}\` — ${t.skillSlug} (${ratio} successes/failures)`);
     }
   }
   lines.push("");

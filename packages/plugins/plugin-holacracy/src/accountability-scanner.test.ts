@@ -7,8 +7,8 @@
  *
  * Tests:
  * 1. Scanner returns 200 with expected shape
- * 2. Deliberately breached metric (engineering_issues_completed_weekly threshold=9999)
- *    produces exactly one tension
+ * 2. Deliberately breached metric (engineering_issues_completed_weekly threshold=5, alert_direction=higher_is_better)
+ *    produces exactly one tension if actual < threshold
  * 3. Running scanner a second time same day does NOT duplicate tension (idempotency)
  * 4. Tension appears in holacracyListTensions for the agent's circle
  * 5. Audit log entry visible for GCC
@@ -21,7 +21,8 @@ const PLUGIN_ID = "b04c5f66-ca71-4e1c-8a16-d4ab1d4bc602";
 const COMPANY_ID = "46cad2c0-19f3-4a22-95d1-c5f3dcb0f096";
 const API_KEY = "local-trusted-key";
 const GCC_CIRCLE_ID = "86948526-54dc-4662-b952-e3225ff5727a";
-// Dev Lead agent — has engineering_issues_completed_weekly with threshold=9999 (always breaches)
+// Dev Lead agent — has engineering_issues_completed_weekly with threshold=5, alert_direction=higher_is_better
+// When actual=11/week, no breach (11 >= 5). Was breaching with threshold=9999.
 const DEV_LEAD_AGENT_ID = "e1f66962-dc3c-4a8e-9875-de1a1dee2839";
 
 const pluginApiUrl = (path: string) =>
@@ -68,23 +69,16 @@ describe("accountability scanner", () => {
     expect(body.agentsScanned).toBeGreaterThan(0);
   }, 15000);
 
-  it("Dev Lead engineering_issues_completed_weekly (threshold=9999) produces a tension", async () => {
+  it("Dev Lead engineering_issues_completed_weekly (threshold=5, direction=higher_is_better) produces NO tension", async () => {
     const { status, body } = await runScan(TEST_SCAN_DATE);
     expect(status).toBe(200);
 
-    // Dev Lead should have at least one tension raised (threshold 9999 always breaches)
+    // Dev Lead should NOT have tension raised (actual 11 >= threshold 5)
     const devLeadRaised = body.raised.filter(
       (t: { agentId: string; accountability: string }) =>
         t.agentId === DEV_LEAD_AGENT_ID && t.accountability === "engineering_issues_completed_weekly",
     );
-    // First run: 1 raised or already skipped (if this test ran before)
-    const devLeadSkipped = body.skipped.filter(
-      (t: { agentId: string; accountability: string; reason: string }) =>
-        t.agentId === DEV_LEAD_AGENT_ID &&
-        t.accountability === "engineering_issues_completed_weekly" &&
-        t.reason === "duplicate",
-    );
-    expect(devLeadRaised.length + devLeadSkipped.length).toBe(1);
+    expect(devLeadRaised.length).toBe(0);
   }, 15000);
 
   it("second scan same day deduplicates — no new tensions", async () => {

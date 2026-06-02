@@ -40,6 +40,9 @@ const manifest: PaperclipPluginManifestV1 = {
     "ui.dashboardWidget.register",
     "http.outbound",
     "instance.settings.register",
+    "mqtt.publish",
+    "mqtt.publishAs",
+    "mqtt.subscribe",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
@@ -48,7 +51,14 @@ const manifest: PaperclipPluginManifestV1 = {
   database: {
     namespaceSlug: "holacracy",
     migrationsDir: "migrations",
-    coreReadTables: ["issues", "agents", "projects", "goals", "approvals"],
+    coreReadTables: ["issues", "agents", "projects", "goals", "approvals", "companies"],
+    coreWriteTables: [
+      "issues",
+      "issue_comments",
+      "circle_discussions",
+      "discussion_commitments",
+      "agent_trust_signals",
+    ],
   },
   apiRoutes: [
     { routeKey: "list-circles", method: "GET", path: "/circles", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
@@ -81,6 +91,52 @@ const manifest: PaperclipPluginManifestV1 = {
     { routeKey: "update-strategy", method: "PATCH", path: "/circles/:circleId/strategies/:strategyId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "onboard-agent", method: "POST", path: "/circles/:circleId/onboard-agent", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
     { routeKey: "accountability-scan", method: "POST", path: "/accountability-scan", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "list-workflows", method: "GET", path: "/circles/:circleId/workflows", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    { routeKey: "create-workflow", method: "POST", path: "/circles/:circleId/workflows", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "get-workflow", method: "GET", path: "/circles/:circleId/workflows/:workflowId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    { routeKey: "update-workflow", method: "PATCH", path: "/circles/:circleId/workflows/:workflowId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "delete-workflow", method: "DELETE", path: "/circles/:circleId/workflows/:workflowId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    { routeKey: "apply-workflow", method: "POST", path: "/issues/:issueId/apply-workflow", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "list-circle-agreements", method: "GET", path: "/circles/:circleId/agreements", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    { routeKey: "create-agreement", method: "POST", path: "/agreements", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "activate-agreement", method: "PATCH", path: "/agreements/:id/activate", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "revoke-agreement", method: "PATCH", path: "/agreements/:id/revoke", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    // IDM — Integrative Decision-Making (canonical 6-phase async protocol)
+    { routeKey: "idm-propose", method: "POST", path: "/idm", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "idm-get", method: "GET", path: "/idm/:id", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    { routeKey: "idm-add-question", method: "POST", path: "/idm/:id/clarifying-question", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "idm-add-reaction", method: "POST", path: "/idm/:id/reaction", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "idm-add-amendment", method: "POST", path: "/idm/:id/amend", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "idm-raise-objection", method: "POST", path: "/idm/:id/objection", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "idm-validate-objection", method: "POST", path: "/idm/objections/:id/validate", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "idm-integrate", method: "POST", path: "/idm/:id/integrate", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "idm-advance", method: "POST", path: "/idm/:id/advance", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    // Phase 2 — Cross-links (Concept 1)
+    { routeKey: "create-cross-link", method: "POST", path: "/cross-links", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "list-circle-cross-links", method: "GET", path: "/circles/:circleId/cross-links", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    { routeKey: "dissolve-cross-link", method: "PATCH", path: "/cross-links/:id/dissolve", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    // Phase 2 — Role-release lifecycle (Concept 3)
+    { routeKey: "request-role-release", method: "POST", path: "/role-assignments/:id/release", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "accept-role-release", method: "POST", path: "/role-releases/:id/accept", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "complete-role-release", method: "POST", path: "/role-releases/:id/complete", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "list-role-releases", method: "GET", path: "/role-releases", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    // Phase 2 — Tactical-pulse + cross-role requests (Concept 6)
+    { routeKey: "run-tactical-pulse", method: "POST", path: "/circles/:circleId/tactical-pulse/run-now", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "list-tactical-records", method: "GET", path: "/circles/:circleId/tactical-records", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    { routeKey: "request-from-role", method: "POST", path: "/roles/:roleId/request", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "accept-cross-role-request", method: "POST", path: "/cross-role-requests/:id/accept", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "decline-cross-role-request", method: "POST", path: "/cross-role-requests/:id/decline", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    // Phase 2 — Elections (Concept 8)
+    { routeKey: "request-election", method: "POST", path: "/circles/:circleId/elections", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "run-election-scoring", method: "POST", path: "/elections/:id/score", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "decide-election", method: "POST", path: "/elections/:id/decide", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "cancel-election", method: "POST", path: "/elections/:id/cancel", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "list-elections", method: "GET", path: "/circles/:circleId/elections", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    // Phase 1.14 — Circle Discussions
+    { routeKey: "create-discussion", method: "POST", path: "/discussions", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "get-discussion", method: "GET", path: "/discussions/:discussionId", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
+    { routeKey: "conclude-discussion", method: "POST", path: "/discussions/:discussionId/conclude", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "body", key: "companyId" } },
+    { routeKey: "list-circle-discussions", method: "GET", path: "/circles/:circleId/discussions", auth: "board-or-agent", capability: "api.routes.register", companyResolution: { from: "query", key: "companyId" } },
   ],
   jobs: [
     {
@@ -95,13 +151,36 @@ const manifest: PaperclipPluginManifestV1 = {
       description: "Daily scan of all agent accountabilities. Raises operational tensions in the agent's primary circle for any breached alert_threshold. Idempotent — [SCAN:{agent}:{metric}:{date}] key prevents duplicate tensions.",
       schedule: "0 3 * * *",
     },
+    // Phase 1.8 — polyrhythm routines. Tactical-pulse iterates all circles
+    // every 6h; governance-pulse is the Phase 3 placeholder (logs only).
+    {
+      jobKey: "tactical-pulse",
+      displayName: "Tactical Pulse",
+      description: "Per-circle tactical pulse snapshot. Records open tensions, role-assignment load, and broadcasts to circle members. Iterates all circles in the company every 6h.",
+      schedule: "0 */6 * * *",
+    },
+    {
+      jobKey: "governance-pulse",
+      displayName: "Governance Pulse (Phase 3 stub)",
+      description: "Weekly governance reflection per circle. Phase 3 dependency — currently logs a no-op so the routine is registered.",
+      schedule: "0 12 * * 1",
+    },
+    // Phase 1.14 — Circle Discussions scheduler. Cron's smallest cadence is
+    // 1 minute (the spec said 30s but the SDK only validates 5-field cron).
+    // The scheduler tick is idempotent; running every minute is fine.
+    {
+      jobKey: "advance-circle-discussions",
+      displayName: "Advance Circle Discussions",
+      description: "Sweep open circle_discussions; promote rounds when complete; spawn next-round issues or Secretary-Summarizer when planned rounds finish.",
+      schedule: "* * * * *",
+    },
   ],
   tools: [
     { name: "holacracy-get-circle", displayName: "Get Holacracy Circle", description: "Get a circle's structure including purpose, roles, sub-circles, and policies", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },
     { name: "holacracy-get-role", displayName: "Get Holacracy Role", description: "Get a role's details including purpose, accountabilities, domains, and who fills it", parametersSchema: { type: "object", properties: { roleId: { type: "string" } }, required: ["roleId"] } },
     { name: "holacracy-list-tensions", displayName: "List Circle Tensions", description: "List open tensions in a circle, optionally filtered by type", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, type: { type: "string", enum: ["operational", "governance", "all"] } }, required: ["circleId"] } },
     { name: "holacracy-raise-tension", displayName: "Raise Tension", description: "Raise a tension in a circle for processing in the next meeting", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, title: { type: "string" }, description: { type: "string" }, type: { type: "string", enum: ["operational", "governance"] } }, required: ["circleId", "title", "description", "type"] } },
-    { name: "holacracy-check-authority", displayName: "Check Authority", description: "Check if an action is within your role's authority scope before acting", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, roleId: { type: "string" }, proposedAction: { type: "string", enum: ["assign-role", "update-policy", "create-project", "escalate", "set-strategy", "modify-governance"] } }, required: ["circleId", "roleId", "proposedAction"] } },
+    { name: "holacracy-check-authority", displayName: "Check Authority", description: "Check if an action is within your role's authority scope before acting", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, roleId: { type: "string" }, proposedAction: { type: "string", enum: ["assign-role", "update-policy", "create-project", "escalate", "set-strategy", "modify-governance", "assign-sub-circle-lead-link"] } }, required: ["circleId", "roleId", "proposedAction"] } },
     { name: "holacracy-log-action", displayName: "Log Action", description: "Log an action taken in your role for the audit trail", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, actionType: { type: "string", enum: ["decision", "delegation", "tension-raised", "escalation", "role-change", "policy-change"] }, detail: { type: "string" } }, required: ["circleId", "actionType", "detail"] } },
     { name: "holacracy-forward-tension", displayName: "Forward Tension", description: "Forward a tension from your circle to the parent circle (Circle Rep only)", parametersSchema: { type: "object", properties: { tensionId: { type: "string" }, context: { type: "string" } }, required: ["tensionId", "context"] } },
     { name: "holacracy-list-policies", displayName: "List Policies", description: "List policies governing a circle's domains", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },
@@ -109,6 +188,50 @@ const manifest: PaperclipPluginManifestV1 = {
     { name: "holacracy-report-checklist", displayName: "Report Checklist", description: "Report check/no-check on your recurring checklist items", parametersSchema: { type: "object", properties: { checklistId: { type: "string" }, checked: { type: "boolean" }, periodDate: { type: "string" } }, required: ["checklistId", "checked", "periodDate"] } },
     { name: "holacracy-report-metric", displayName: "Report Metric", description: "Report a metric value for the current period", parametersSchema: { type: "object", properties: { metricId: { type: "string" }, value: { type: "number" }, periodDate: { type: "string" } }, required: ["metricId", "value", "periodDate"] } },
     { name: "holacracy-onboard-agent", displayName: "Onboard Agent", description: "Create a custom role in a circle and prepare onboarding instructions. Returns the role ID and a holacracy-role.md template for the new agent. Circle Lead only.", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, agentName: { type: "string" }, roleName: { type: "string" }, rolePurpose: { type: "string" }, roleAccountabilities: { type: "array", items: { type: "string" } }, roleDomains: { type: "array", items: { type: "string" } } }, required: ["circleId", "agentName", "roleName", "rolePurpose"] } },
+    { name: "holacracy-list-agreements", displayName: "List Agreements", description: "List agreements (afspraken) for a circle — both intra-circle and cross-circle agreements where the circle holds a party role", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },
+    { name: "holacracy-propose-agreement", displayName: "Propose Agreement", description: "Propose a new agreement between roles in the form 'If Y then X'. scope is 'intra_circle' (parties all in primary circle) or 'cross_circle' (parties span circles). Status starts as 'proposed'.", parametersSchema: { type: "object", properties: { scope: { type: "string", enum: ["intra_circle", "cross_circle"] }, primaryCircleId: { type: "string" }, parties: { type: "array", items: { type: "object", properties: { roleId: { type: "string" }, circleId: { type: "string" } }, required: ["roleId", "circleId"] } }, title: { type: "string" }, condition: { type: "string" }, commitment: { type: "string" }, expiresAt: { type: "string" }, proposedViaTensionId: { type: "string" } }, required: ["scope", "primaryCircleId", "parties", "title", "commitment"] } },
+    { name: "holacracy-activate-agreement", displayName: "Activate Agreement", description: "Move an agreement from 'proposed' to 'active'. Stamps activated_at.", parametersSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+    { name: "holacracy-revoke-agreement", displayName: "Revoke Agreement", description: "Revoke an agreement (status -> 'revoked') with a reason captured for the audit trail.", parametersSchema: { type: "object", properties: { id: { type: "string" }, reason: { type: "string" } }, required: ["id", "reason"] } },
+    // IDM — Integrative Decision-Making (canonical 6-phase async protocol)
+    { name: "holacracy-idm-propose", displayName: "IDM: Propose", description: "Open a new Integrative Decision-Making (IDM) process for a circle. Creates the companion approvals row and starts phase=proposal with a 24h deadline. proposal.kind is the target output ('policy' | 'agreement' | 'role' | other) and proposal.content is the structured payload.", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, tensionId: { type: "string" }, proposal: { type: "object", properties: { kind: { type: "string" }, content: {} }, required: ["kind", "content"] } }, required: ["circleId", "proposal"] } },
+    { name: "holacracy-idm-question", displayName: "IDM: Clarifying Question", description: "Add a clarifying question during the IDM 'clarifying' phase. Questions only seek understanding — they do not propose changes.", parametersSchema: { type: "object", properties: { id: { type: "string" }, body: { type: "string" }, roleId: { type: "string" } }, required: ["id", "body"] } },
+    { name: "holacracy-idm-react", displayName: "IDM: Reaction", description: "Add a reaction during the IDM 'reactions' phase. Reactions are individual expressions; no dialogue. Each participating role posts at most one.", parametersSchema: { type: "object", properties: { id: { type: "string" }, body: { type: "string" }, roleId: { type: "string" } }, required: ["id", "body"] } },
+    { name: "holacracy-idm-amend", displayName: "IDM: Amendment", description: "Propose an amendment or clarification during the IDM 'amend_or_clarify' phase. The proposer evaluates and may revise the proposal.", parametersSchema: { type: "object", properties: { id: { type: "string" }, body: { type: "string" }, roleId: { type: "string" } }, required: ["id", "body"] } },
+    { name: "holacracy-idm-object", displayName: "IDM: Raise Objection", description: "Raise an objection during the IDM 'objections' phase. The three-test validity (unworkable, follows from proposal, current-not-speculation) is filled separately via holacracy-idm-validate-objection.", parametersSchema: { type: "object", properties: { id: { type: "string" }, body: { type: "string" }, roleId: { type: "string" } }, required: ["id", "body"] } },
+    { name: "holacracy-idm-validate-objection", displayName: "IDM: Validate Objection", description: "Run the three-test objection validity check. is_valid = all three test.result fields true. Each test is {result: boolean, rationale: string}.", parametersSchema: { type: "object", properties: { objectionId: { type: "string" }, tests: { type: "object", properties: { unworkable: { type: "object", properties: { result: { type: "boolean" }, rationale: { type: "string" } }, required: ["result", "rationale"] }, followsFromProposal: { type: "object", properties: { result: { type: "boolean" }, rationale: { type: "string" } }, required: ["result", "rationale"] }, currentNotSpeculation: { type: "object", properties: { result: { type: "boolean" }, rationale: { type: "string" } }, required: ["result", "rationale"] } }, required: ["unworkable", "followsFromProposal", "currentNotSpeculation"] } }, required: ["objectionId", "tests"] } },
+    { name: "holacracy-idm-integrate", displayName: "IDM: Integrate Objection", description: "Integrate a valid objection by recording an amendment payload that addresses it. Updates idm_objections.integration_amendment_id and appends to idm_approvals.amendments.", parametersSchema: { type: "object", properties: { id: { type: "string" }, objectionId: { type: "string" }, amendment: { type: "object", properties: { body: { type: "string" }, content: {} }, required: ["body"] } }, required: ["id", "objectionId", "amendment"] } },
+    // Phase 2 — Cross-links (Concept 1)
+    { name: "holacracy-create-cross-link", displayName: "Create Cross-Link", description: "Create a cross-link (sibling-circle direct channel) between two non-ancestral circles that share a common ancestor. Each side nominates a rep role.", parametersSchema: { type: "object", properties: { circleAId: { type: "string" }, circleBId: { type: "string" }, repRoleAId: { type: "string" }, repRoleBId: { type: "string" }, purpose: { type: "string" }, createdViaTensionId: { type: "string" } }, required: ["circleAId", "circleBId", "repRoleAId", "repRoleBId", "purpose"] } },
+    { name: "holacracy-list-cross-links", displayName: "List Cross-Links", description: "List cross-links touching a circle (active + dissolved).", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },
+    { name: "holacracy-dissolve-cross-link", displayName: "Dissolve Cross-Link", description: "Dissolve an active cross-link with a reason.", parametersSchema: { type: "object", properties: { id: { type: "string" }, reason: { type: "string" } }, required: ["id", "reason"] } },
+    // Phase 2 — Role-release lifecycle (Concept 3)
+    { name: "holacracy-release-role", displayName: "Release Role", description: "Request release of a role assignment. Raises an operational [RELEASE:{id}] tension to the circle's Lead Link.", parametersSchema: { type: "object", properties: { roleAssignmentId: { type: "string" }, handoffToAgentId: { type: "string" }, handoffNotes: { type: "string" }, reason: { type: "string" } }, required: ["roleAssignmentId"] } },
+    { name: "holacracy-accept-release", displayName: "Accept Role Release", description: "Lead Link accepts a pending role-release request; moves to pending_handoff.", parametersSchema: { type: "object", properties: { releaseId: { type: "string" } }, required: ["releaseId"] } },
+    { name: "holacracy-complete-handoff", displayName: "Complete Role Handoff", description: "Complete a pending_handoff release. If handoff_to_agent_id is set, reassigns the role; otherwise vacates it.", parametersSchema: { type: "object", properties: { releaseId: { type: "string" } }, required: ["releaseId"] } },
+    // Phase 2 — Tactical pulse + cross-role requests (Concept 6)
+    { name: "holacracy-run-tactical-pulse", displayName: "Run Tactical Pulse", description: "Snapshot the circle's tactical state (open tensions, role-assignment load) and broadcast to circle members.", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, cadence: { type: "string" } }, required: ["circleId"] } },
+    { name: "holacracy-list-tactical-records", displayName: "List Tactical Records", description: "List tactical pulse records for a circle.", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },
+    { name: "holacracy-request-from-role", displayName: "Request from Role", description: "Send a cross-role request (next_action | project | info) to another role. Creates a durable issue when actionable.", parametersSchema: { type: "object", properties: { requestingRoleId: { type: "string" }, targetRoleId: { type: "string" }, kind: { type: "string", enum: ["next_action", "project", "info"] }, body: { type: "string" } }, required: ["requestingRoleId", "targetRoleId", "kind", "body"] } },
+    { name: "holacracy-accept-cross-role-request", displayName: "Accept Cross-Role Request", description: "Accept a pending cross-role request (mark accepted; downstream issue remains for the work).", parametersSchema: { type: "object", properties: { requestId: { type: "string" } }, required: ["requestId"] } },
+    { name: "holacracy-decline-cross-role-request", displayName: "Decline Cross-Role Request", description: "Decline a pending cross-role request with a reason.", parametersSchema: { type: "object", properties: { requestId: { type: "string" }, reason: { type: "string" } }, required: ["requestId", "reason"] } },
+    // Phase 2 — Elections (Concept 8)
+    { name: "holacracy-request-election", displayName: "Request Role Election", description: "Open a capability-based election for a target role.", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, targetRoleId: { type: "string" } }, required: ["circleId", "targetRoleId"] } },
+    { name: "holacracy-run-election-scoring", displayName: "Run Election Scoring", description: "Score all candidates: 0.7 * Jaccard(skills, role.accountabilities) + 0.3 * (1 - focus_ap/100). Uses retained Agent Cards via MQTT when available; falls back to SQL.", parametersSchema: { type: "object", properties: { electionId: { type: "string" } }, required: ["electionId"] } },
+    { name: "holacracy-decide-election", displayName: "Decide Election", description: "Decide an election by assigning the role to a chosen candidate agent.", parametersSchema: { type: "object", properties: { electionId: { type: "string" }, decisionAgentId: { type: "string" } }, required: ["electionId", "decisionAgentId"] } },
+    { name: "holacracy-cancel-election", displayName: "Cancel Election", description: "Cancel an open or scored election.", parametersSchema: { type: "object", properties: { electionId: { type: "string" } }, required: ["electionId"] } },
+    // Phase 1.13 — Speech tools (agent voice over A2A-MQTT)
+    { name: "holacracy-talk-to-agent", displayName: "Talk to Agent", description: "Send an A2A Task directly to a peer agent over MQTT. Optionally await the reply on a per-task topic. Set `contextId` to continue a prior conversation thread; if omitted a fresh UUID is minted.", parametersSchema: { type: "object", properties: { toAgentId: { type: "string" }, text: { type: "string" }, contextId: { type: "string" }, awaitReply: { type: "boolean" }, timeoutMs: { type: "number" } }, required: ["toAgentId", "text"] } },
+    { name: "holacracy-reply-on-task", displayName: "Reply on A2A Task", description: "Publish a Task-state reply for an inbound A2A request the agent is currently working. Use this to emit `input_required` (request clarification) or `failed` before the issue completes; the bridge auto-emits `completed` when the issue closes.", parametersSchema: { type: "object", properties: { issueId: { type: "string" }, state: { type: "string", enum: ["completed", "input_required", "failed"] }, text: { type: "string" }, artifacts: { type: "array" } }, required: ["issueId", "state"] } },
+    { name: "holacracy-broadcast-to-circle", displayName: "Broadcast to Circle", description: "Publish an announcement on a circle's event topic (host-mediated; publisher agentId is stamped in MQTT user properties so receivers know who said it).", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, kind: { type: "string" }, body: {} }, required: ["circleId", "kind", "body"] } },
+    { name: "holacracy-raise-tension-on-bus", displayName: "Raise Tension on Bus", description: "Raise a tension in a circle (persists to DB) AND publish a tension-raised event on the circle's MQTT event topic so every member receives it.", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, title: { type: "string" }, body: { type: "string" }, severity: { type: "string", enum: ["low", "medium", "high"] } }, required: ["circleId", "title", "body"] } },
+    { name: "holacracy-ask-skill", displayName: "Ask Skill (Shared Bus)", description: "Publish a Task on the skill pool topic; the broker round-robins to one accountability-holder via shared subscription. Cross-circle by design — used for org-wide work distribution by skill name.", parametersSchema: { type: "object", properties: { skill: { type: "string" }, text: { type: "string" }, contextId: { type: "string" }, awaitReply: { type: "boolean" }, timeoutMs: { type: "number" } }, required: ["skill", "text"] } },
+    // Phase 1.15d — repair (clarify + retract)
+    { name: "holacracy-ask-clarifying-question", displayName: "Ask Clarifying Question", description: "Ask a peer agent a clarifying question on an active discussion. Does NOT count as a discussion turn — it's a sidecar exchange tagged a2a-task-kind=clarifying-question. Reuse the same contextId as the discussion to thread it.", parametersSchema: { type: "object", properties: { targetAgentId: { type: "string" }, contextId: { type: "string" }, question: { type: "string" } }, required: ["targetAgentId", "contextId", "question"] } },
+    { name: "holacracy-retract-turn", displayName: "Retract Turn", description: "Cancel a discussion turn you previously made and publish a retraction event on the discussion topic. Transcript renderers show the turn as withdrawn.", parametersSchema: { type: "object", properties: { turnIssueId: { type: "string" }, reason: { type: "string" } }, required: ["turnIssueId", "reason"] } },
+    // Phase 1.15e — commit-to-support
+    { name: "holacracy-commit-to-conclusion", displayName: "Commit to Conclusion", description: "Signal your stance on a discussion's conclusion. support = bind to it; support-with-objection = bind + auto-log a tension linking to this discussion; block = veto (only Lead Link/Secretary/Facilitator/domain-owner; otherwise auto-downgrades to support-with-objection).", parametersSchema: { type: "object", properties: { discussionId: { type: "string" }, signal: { type: "string", enum: ["support", "support-with-objection", "block"] }, reason: { type: "string" } }, required: ["discussionId", "signal"] } },
+    // Phase 1.15g — 1:1 primitive
+    { name: "holacracy-request-one-on-one", displayName: "Request 1:1", description: "Open a 1:1 discussion (roundtable mode, 1 round) with a peer agent. Underlying primitive is circle_discussions with circle_id=NULL and explicit participantAgentIds=[caller, target].", parametersSchema: { type: "object", properties: { withAgentId: { type: "string" }, topic: { type: "string" }, initiateNow: { type: "boolean" } }, required: ["withAgentId"] } },
   ],
   ui: {
     slots: [
@@ -118,6 +241,17 @@ const manifest: PaperclipPluginManifestV1 = {
       { type: "sidebar", id: "holacracy-tensions-board-sidebar", displayName: "Tensions Board", exportName: "TensionsBoardSidebar" },
       { type: "detailTab", id: "holacracy-agent-role", displayName: "Role", exportName: "AgentRoleTab", entityTypes: ["agent"] },
       { type: "detailTab", id: "holacracy-circle-detail", displayName: "Circle", exportName: "CircleDetailTab", entityTypes: ["project"] },
+      { type: "detailTab", id: "holacracy-dna", displayName: "Company DNA", exportName: "DNATab", entityTypes: ["project"] },
+      { type: "detailTab", id: "holacracy-system-pulse", displayName: "System Pulse", exportName: "SystemPulseTab", entityTypes: ["project"] },
+      { type: "detailTab", id: "holacracy-workflows", displayName: "Workflows", exportName: "WorkflowsTab", entityTypes: ["project"] },
+      { type: "detailTab", id: "holacracy-agreements", displayName: "Agreements", exportName: "AgreementsTab", entityTypes: ["project"] },
+      { type: "detailTab", id: "holacracy-idm", displayName: "IDM", exportName: "IDMTab", entityTypes: ["project"] },
+      { type: "detailTab", id: "holacracy-cross-links", displayName: "Cross-Links", exportName: "CrossLinksTab", entityTypes: ["project"] },
+      { type: "detailTab", id: "holacracy-releases", displayName: "Releases", exportName: "ReleasesTab", entityTypes: ["project"] },
+      { type: "detailTab", id: "holacracy-tactical-pulse", displayName: "Tactical Pulse", exportName: "TacticalPulseTab", entityTypes: ["project"] },
+      { type: "detailTab", id: "holacracy-cross-role-requests", displayName: "Cross-Role Requests", exportName: "CrossRoleRequestsTab", entityTypes: ["project"] },
+      { type: "detailTab", id: "holacracy-elections", displayName: "Elections", exportName: "ElectionsTab", entityTypes: ["project"] },
+      { type: "detailTab", id: "holacracy-issue-workflow", displayName: "Workflow", exportName: "IssueWorkflowTab", entityTypes: ["issue"] },
       { type: "dashboardWidget", id: "holacracy-health", displayName: "Circle Health", exportName: "CircleHealthWidget" },
       { type: "settingsPage", id: "holacracy-settings", displayName: "Holacracy", exportName: "HolacracySettings" },
     ],

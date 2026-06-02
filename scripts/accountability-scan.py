@@ -120,8 +120,8 @@ def eval_count_done_last7d(agent_id, threshold):
         completed = parse_issue_date(iss.get("completedAt") or iss.get("updatedAt"))
         if completed and (now - completed).days <= 7:
             count += 1
-    breached = count < int(threshold)
-    return count, breached
+    # Caller responsible for direction-aware breach logic via alert_direction field
+    return count, False  # return raw count; caller decides breach based on direction
 
 
 def eval_avg_inprogress_hours(agent_id, threshold):
@@ -171,34 +171,53 @@ def evaluate_accountability(agent_id, acc):
     name = acc.get("name", "")
     metric = acc.get("metric", "")
     threshold = acc.get("alert_threshold")
+    alert_direction = acc.get("alert_direction", "lower_is_better")  # new field
 
     # agent_active placeholder: check any issue this month
     if name == "agent_active":
-        return eval_boolean_agent_active(agent_id, threshold)
+        value, breached = eval_boolean_agent_active(agent_id, threshold)
+        return value, breached
 
     # Dev Lead: pr_review_latency_hours — proxy: avg stale in_progress hours
     if name == "pr_review_latency_hours":
-        return eval_avg_inprogress_hours(agent_id, threshold)
+        value, breached = eval_avg_inprogress_hours(agent_id, threshold)
+        # latency: lower_is_better, so breach is already value > threshold (correct)
+        return value, breached
 
     # Any latency/hours metric — avg stale in_progress as proxy
     if any(k in name for k in ("latency_hours", "turnaround_hours", "response_latency")):
-        return eval_avg_inprogress_hours(agent_id, threshold)
+        value, breached = eval_avg_inprogress_hours(agent_id, threshold)
+        # latency: lower_is_better
+        return value, breached
 
     # engineering_issues_completed_weekly
     if name == "engineering_issues_completed_weekly":
-        return eval_count_done_last7d(agent_id, threshold)
+        value, breached = eval_count_done_last7d(agent_id, threshold)
+        # completed: higher_is_better, so flip breach if direction says so
+        if alert_direction == "higher_is_better":
+            breached = value < int(threshold)
+        return value, breached
 
     # PM Coordinator: unrouted_backlog_count
     if name == "unrouted_backlog_count":
-        return eval_unrouted_backlog(agent_id, threshold)
+        value, breached = eval_unrouted_backlog(agent_id, threshold)
+        # unrouted count: lower_is_better, so breach is already value > threshold (correct)
+        return value, breached
 
-    # Count-based metrics
+    # Count-based metrics (assume higher_is_better for most counts)
     if any(k in name for k in ("completed", "published", "deployed", "groomed", "per_assigned", "resolved")):
-        return eval_count_done_last7d(agent_id, threshold if threshold is not None else 0)
+        value, breached = eval_count_done_last7d(agent_id, threshold if threshold is not None else 0)
+        # these are typically higher_is_better
+        if alert_direction == "higher_is_better":
+            breached = value < int(threshold if threshold is not None else 0)
+        return value, breached
 
     # Numeric threshold but unknown metric — use done count as proxy
     if isinstance(threshold, (int, float)) and threshold > 0:
-        return eval_count_done_last7d(agent_id, threshold)
+        value, breached = eval_count_done_last7d(agent_id, threshold)
+        if alert_direction == "higher_is_better":
+            breached = value < int(threshold)
+        return value, breached
 
     # Default: not measurable with available data — skip (return None, False)
     return None, False

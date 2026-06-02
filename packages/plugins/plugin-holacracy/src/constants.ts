@@ -58,7 +58,64 @@ export const TOOL_NAMES = {
   reportChecklist: "holacracy-report-checklist",
   reportMetric: "holacracy-report-metric",
   onboardAgent: "holacracy-onboard-agent",
+  listAgreements: "holacracy-list-agreements",
+  proposeAgreement: "holacracy-propose-agreement",
+  activateAgreement: "holacracy-activate-agreement",
+  revokeAgreement: "holacracy-revoke-agreement",
+  // IDM (Integrative Decision-Making) — canonical 6-phase async protocol
+  idmPropose: "holacracy-idm-propose",
+  idmQuestion: "holacracy-idm-question",
+  idmReact: "holacracy-idm-react",
+  idmAmend: "holacracy-idm-amend",
+  idmObject: "holacracy-idm-object",
+  idmValidateObjection: "holacracy-idm-validate-objection",
+  idmIntegrate: "holacracy-idm-integrate",
+  // Phase 2 — Cross-links, role-release, tactical, elections
+  createCrossLink: "holacracy-create-cross-link",
+  listCrossLinks: "holacracy-list-cross-links",
+  dissolveCrossLink: "holacracy-dissolve-cross-link",
+  releaseRole: "holacracy-release-role",
+  acceptRelease: "holacracy-accept-release",
+  completeHandoff: "holacracy-complete-handoff",
+  runTacticalPulse: "holacracy-run-tactical-pulse",
+  listTacticalRecords: "holacracy-list-tactical-records",
+  requestFromRole: "holacracy-request-from-role",
+  acceptCrossRoleRequest: "holacracy-accept-cross-role-request",
+  declineCrossRoleRequest: "holacracy-decline-cross-role-request",
+  requestElection: "holacracy-request-election",
+  runElectionScoring: "holacracy-run-election-scoring",
+  decideElection: "holacracy-decide-election",
+  cancelElection: "holacracy-cancel-election",
+  // Phase 1.13 — Speech tools (agent voice over A2A-MQTT)
+  talkToAgent: "holacracy-talk-to-agent",
+  replyOnTask: "holacracy-reply-on-task",
+  broadcastToCircle: "holacracy-broadcast-to-circle",
+  raiseTensionOnBus: "holacracy-raise-tension-on-bus",
+  askSkill: "holacracy-ask-skill",
+  // Phase 1.15d — repair tools
+  askClarifyingQuestion: "holacracy-ask-clarifying-question",
+  retractTurn: "holacracy-retract-turn",
+  // Phase 1.15e — commit-to-support
+  commitToConclusion: "holacracy-commit-to-conclusion",
+  // Phase 1.15g — 1:1 primitive
+  requestOneOnOne: "holacracy-request-one-on-one",
 } as const;
+
+// IDM phase enum + per-phase default deadline.
+export const IDM_PHASES = {
+  proposal: "proposal",
+  clarifying: "clarifying",
+  reactions: "reactions",
+  amendOrClarify: "amend_or_clarify",
+  objections: "objections",
+  integration: "integration",
+  adopted: "adopted",
+  dropped: "dropped",
+} as const;
+
+export type IdmPhase = (typeof IDM_PHASES)[keyof typeof IDM_PHASES];
+
+export const IDM_DEFAULT_PHASE_HOURS = 24;
 
 /**
  * Default domain conflict pairs (global, company_id = all-zero UUID).
@@ -133,4 +190,50 @@ export const API_ROUTES = {
   updateStrategy: "update-strategy",
   onboardAgent: "onboard-agent",
   accountabilityScan: "accountability-scan",
+  listWorkflows: "list-workflows",
+  createWorkflow: "create-workflow",
+  getWorkflow: "get-workflow",
+  updateWorkflow: "update-workflow",
+  deleteWorkflow: "delete-workflow",
+  applyWorkflow: "apply-workflow",
+  listCircleAgreements: "list-circle-agreements",
+  createAgreement: "create-agreement",
+  activateAgreement: "activate-agreement",
+  revokeAgreement: "revoke-agreement",
+  // IDM (Integrative Decision-Making)
+  idmPropose: "idm-propose",
+  idmGet: "idm-get",
+  idmAddQuestion: "idm-add-question",
+  idmAddReaction: "idm-add-reaction",
+  idmAddAmendment: "idm-add-amendment",
+  idmRaiseObjection: "idm-raise-objection",
+  idmValidateObjection: "idm-validate-objection",
+  idmIntegrate: "idm-integrate",
+  idmAdvance: "idm-advance",
+  // Phase 2 — Cross-links (Concept 1)
+  createCrossLink: "create-cross-link",
+  listCircleCrossLinks: "list-circle-cross-links",
+  dissolveCrossLink: "dissolve-cross-link",
+  // Phase 2 — Role-release lifecycle (Concept 3)
+  requestRoleRelease: "request-role-release",
+  acceptRoleRelease: "accept-role-release",
+  completeRoleRelease: "complete-role-release",
+  listRoleReleases: "list-role-releases",
+  // Phase 2 — Tactical + cross-role (Concept 6)
+  runTacticalPulse: "run-tactical-pulse",
+  listTacticalRecords: "list-tactical-records",
+  requestFromRole: "request-from-role",
+  acceptCrossRoleRequest: "accept-cross-role-request",
+  declineCrossRoleRequest: "decline-cross-role-request",
+  // Phase 2 — Elections (Concept 8)
+  requestElection: "request-election",
+  runElectionScoring: "run-election-scoring",
+  decideElection: "decide-election",
+  cancelElection: "cancel-election",
+  listElections: "list-elections",
+  // Phase 1.14 — Circle Discussions
+  createDiscussion: "create-discussion",
+  getDiscussion: "get-discussion",
+  concludeDiscussion: "conclude-discussion",
+  listCircleDiscussions: "list-circle-discussions",
 } as const;

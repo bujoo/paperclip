@@ -54,6 +54,7 @@ let httpCtx: PluginContext["http"] | null = null;
 let approvalsCtx: PluginContext["approvals"] | null = null;
 let issuesCtx: PluginContext["issues"] | null = null;
 let mqttCtx: PluginContext["mqtt"] | null = null;
+let activityCtx: PluginContext["activity"] | null = null;
 
 function tbl(table: string) {
   if (!dbCtx) throw new Error("DB not initialized");
@@ -2445,7 +2446,12 @@ interface CircleDiscussionRow {
   started_at: string;
   concluded_at: string | null;
   metadata: Record<string, unknown> | null;
-  /** Phase 1.15c — 'reverse-priority' | 'roundtable' | 'parallel' | 'call-out'. */
+  /** Phase 1.15c — speaker mode.
+   *  'psych_safety' (alias: legacy 'reverse-priority') | 'roundtable' |
+   *  'parallel' | 'call-out'. Phase 1.15h-i renamed `reverse-priority` →
+   *  `psych_safety` (Lead Link last is a Grove/psych-safety overlay, not
+   *  Holacracy doctrine — Robertson treats reactions as symmetric). Both
+   *  values still work as input; storage prefers `psych_safety`. */
   speaker_mode: string;
   current_speaker_idx: number;
   /** Phase 1.15c — pre-computed ordering (uuid[]) when not parallel. Empty
@@ -2454,6 +2460,21 @@ interface CircleDiscussionRow {
   /** Phase 1.15e — 'open' | 'awaiting_commitments' | 'concluded'. */
   phase: string;
   required_commitment_threshold: number;
+  /** Phase 1.15h-h1 — SMART fields. */
+  success_criterion: string | null;
+  scope_in: string[] | null;
+  scope_out: string[] | null;
+  decision_deadline: string | null;
+  motivating_tension_id: string | null;
+  expected_output_kind: string | null;
+  /** Phase 1.15h-i #9 — set by `bridgeDiscussionToIdm` when objections were
+   *  raised in the commit-to-support phase. Soft pointer to `idm_approvals.id`. */
+  idm_approval_id: string | null;
+  /** Phase 1.15h-i #2 — Grove pre-flight (High Output Management ch. 5). */
+  decision_owner_agent_id: string | null;
+  consulted_agent_ids: string[] | null;
+  ratifier_agent_id: string | null;
+  informed_agent_ids: string[] | null;
 }
 
 const DISCUSSION_TURN_ORIGIN_KIND = "discussion:turn";
@@ -2639,9 +2660,11 @@ interface SpawnTurnArgs {
 /**
  * Compute the speaker order for a discussion based on its `speaker_mode`.
  * - `parallel`: returns the participant list as-is.
- * - `reverse-priority`: Lead Link of the circle goes LAST; remaining members
- *   are alphabetically by id (deterministic). Falls back to the participant
- *   order if there's no circle (1:1).
+ * - `psych_safety` (alias: `reverse-priority`): Lead Link of the circle goes
+ *   LAST; remaining members are alphabetical by id (deterministic). Falls back
+ *   to the participant order if there's no circle (1:1). Lead-Link-last is a
+ *   Grove/psych-safety overlay so the highest-status voice doesn't anchor the
+ *   reactions round — not Holacracy doctrine.
  * - `roundtable`: alphabetical by id.
  * - `call-out`: not supported here — fall back to participant list.
  */
@@ -2649,9 +2672,9 @@ async function computeSpeakerOrder(
   discussion: CircleDiscussionRow,
 ): Promise<string[]> {
   if (!dbCtx) return discussion.participant_agent_ids;
-  const mode = discussion.speaker_mode ?? "reverse-priority";
+  const mode = discussion.speaker_mode ?? "psych_safety";
   if (mode === "parallel") return discussion.participant_agent_ids;
-  if (mode === "reverse-priority") {
+  if (mode === "psych_safety" || mode === "reverse-priority") {
     // Find the Lead Link of the circle; place last.
     let leadLinkAgentId: string | null = null;
     if (discussion.circle_id) {
@@ -2683,6 +2706,28 @@ async function computeSpeakerOrder(
 async function spawnRoundTurnIssues(args: SpawnTurnArgs): Promise<string[]> {
   if (!dbCtx) throw new Error("DB not initialized");
   const { discussion, roundNumber, digest, onlyAgents } = args;
+  
+  // MYA-175: Guard against empty topic payloads (race between discussion creation
+  // and snapshot assembly can result in agents woken with no active discussions).
+  if (!discussion.topic || discussion.topic.trim().length === 0) {
+    const msg = `Discussion ${discussion.id} spawn-round guard: empty topic rejected`;
+    console.error(`[holacracy] MYA-175: ${msg}`);
+    if (activityCtx) {
+      try {
+        await activityCtx.log({
+          kind: "holacracy-issue",
+          action: "empty-round-spawn-guard-triggered",
+          entityId: discussion.id,
+          detail: `Round ${roundNumber} rejected due to empty topic`,
+          severity: "warning",
+        });
+      } catch (_err) {
+        // ignore logging failure
+      }
+    }
+    throw new Error(msg);
+  }
+  
   const projectInfo = discussion.circle_id ? await resolveCircleProject(discussion.circle_id) : null;
   const projectId = projectInfo?.projectId ?? null;
   const titleSrc = `[Discussion] ${discussion.topic}`;
@@ -2862,10 +2907,27 @@ interface CreateDiscussionInput {
   companyId: string;
   initiatedByAgentId?: string | null;
   initiatedByUserId?: string | null;
-  /** Phase 1.15c — 'reverse-priority' (default), 'roundtable', 'parallel', or 'call-out'. */
+  /** Phase 1.15c — 'psych_safety' (default; alias: 'reverse-priority'),
+   *  'roundtable', 'parallel', or 'call-out'. */
   speakerMode?: string;
   /** Phase 1.15g — 1:1 / cross-circle: explicit participants override circle membership. */
   participantAgentIds?: string[];
+  /** Phase 1.15h-h1 — SMART fields. Surface to the agent preamble so the
+   *  discussion has a clear convergence target. All optional; when absent the
+   *  preamble falls back to the generic reactions-round instructions. */
+  successCriterion?: string;
+  scopeIn?: string[];
+  scopeOut?: string[];
+  decisionDeadline?: string | Date;
+  motivatingTensionId?: string;
+  expectedOutputKind?: string;
+  /** Phase 1.15h-i #2 — Grove pre-flight questions (High Output Management
+   *  ch. 5). WHO DECIDES / WHO IS CONSULTED / WHO RATIFIES / WHO IS INFORMED.
+   *  All optional; the steward calls the ratifier on a 60-min stall when set. */
+  decisionOwnerAgentId?: string | null;
+  consultedAgentIds?: string[];
+  ratifierAgentId?: string | null;
+  informedAgentIds?: string[];
 }
 
 async function createDiscussion(
@@ -2878,10 +2940,15 @@ async function createDiscussion(
   const topic = (input.topic ?? "").trim();
   if (topic.length === 0) return { ok: false, status: 400, error: "topic is required" };
   const rounds = Math.max(1, Math.min(input.rounds ?? 1, 5));
-  const speakerMode = (input.speakerMode ?? "reverse-priority").toLowerCase();
-  const allowedModes = new Set(["reverse-priority", "roundtable", "parallel", "call-out"]);
+  // Phase 1.15h-i — accept `psych_safety` (new label) and `reverse-priority`
+  // (legacy alias) as the same Grove/psych-safety overlay; normalise to
+  // `psych_safety` for storage. Default is `psych_safety` (was
+  // `reverse-priority`).
+  const rawSpeakerMode = (input.speakerMode ?? "psych_safety").toLowerCase();
+  const speakerMode = rawSpeakerMode === "reverse-priority" ? "psych_safety" : rawSpeakerMode;
+  const allowedModes = new Set(["psych_safety", "roundtable", "parallel", "call-out"]);
   if (!allowedModes.has(speakerMode)) {
-    return { ok: false, status: 400, error: `Unknown speaker_mode '${speakerMode}'` };
+    return { ok: false, status: 400, error: `Unknown speaker_mode '${rawSpeakerMode}'` };
   }
 
   let participants: string[];
@@ -2903,6 +2970,45 @@ async function createDiscussion(
   const contextId = randomUUID();
 
   // Compute speaker_order based on mode + circle Lead Link.
+  // Phase 1.15h-h1 — normalise SMART fields up-front.
+  const successCriterion =
+    typeof input.successCriterion === "string" && input.successCriterion.trim().length > 0
+      ? input.successCriterion.trim()
+      : null;
+  const scopeIn: string[] = Array.isArray(input.scopeIn)
+    ? input.scopeIn.map((s) => String(s).trim()).filter(Boolean)
+    : [];
+  const scopeOut: string[] = Array.isArray(input.scopeOut)
+    ? input.scopeOut.map((s) => String(s).trim()).filter(Boolean)
+    : [];
+  const decisionDeadlineIso: string | null = input.decisionDeadline
+    ? (input.decisionDeadline instanceof Date
+        ? input.decisionDeadline.toISOString()
+        : new Date(input.decisionDeadline).toISOString())
+    : null;
+  const motivatingTensionId =
+    typeof input.motivatingTensionId === "string" && UUID_RE.test(input.motivatingTensionId)
+      ? input.motivatingTensionId
+      : null;
+  const expectedOutputKind =
+    typeof input.expectedOutputKind === "string" && input.expectedOutputKind.trim().length > 0
+      ? input.expectedOutputKind.trim()
+      : null;
+
+  // Phase 1.15h-i #2 — normalise Grove pre-flight fields. Each agent id must
+  // be a UUID; bad values silently drop so partial input still creates the
+  // discussion. Lists default to empty (PG TEXT[] / uuid[]).
+  const normaliseAgentId = (v: unknown): string | null =>
+    typeof v === "string" && UUID_RE.test(v) ? v : null;
+  const normaliseAgentIdList = (v: unknown): string[] =>
+    Array.isArray(v)
+      ? v.map((x) => normaliseAgentId(x)).filter((x): x is string => x !== null)
+      : [];
+  const decisionOwnerAgentId = normaliseAgentId(input.decisionOwnerAgentId);
+  const consultedAgentIds = normaliseAgentIdList(input.consultedAgentIds);
+  const ratifierAgentId = normaliseAgentId(input.ratifierAgentId);
+  const informedAgentIds = normaliseAgentIdList(input.informedAgentIds);
+
   const tempForOrder: CircleDiscussionRow = {
     id,
     company_id: input.companyId,
@@ -2926,6 +3032,17 @@ async function createDiscussion(
     speaker_order: [],
     phase: "open",
     required_commitment_threshold: 0.8,
+    success_criterion: successCriterion,
+    scope_in: scopeIn,
+    scope_out: scopeOut,
+    decision_deadline: decisionDeadlineIso,
+    motivating_tension_id: motivatingTensionId,
+    expected_output_kind: expectedOutputKind,
+    idm_approval_id: null,
+    decision_owner_agent_id: decisionOwnerAgentId,
+    consulted_agent_ids: consultedAgentIds,
+    ratifier_agent_id: ratifierAgentId,
+    informed_agent_ids: informedAgentIds,
   };
   const speakerOrder = await computeSpeakerOrder(tempForOrder);
 
@@ -2936,9 +3053,15 @@ async function createDiscussion(
         initiated_by_agent_id, initiated_by_user_id, participant_agent_ids,
         status, rounds_planned, rounds_completed, metadata,
         speaker_mode, current_speaker_idx, speaker_order, phase,
-        required_commitment_threshold)
+        required_commitment_threshold,
+        success_criterion, scope_in, scope_out, decision_deadline,
+        motivating_tension_id, expected_output_kind,
+        decision_owner_agent_id, consulted_agent_ids,
+        ratifier_agent_id, informed_agent_ids)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid[], 'open', $10, 0, $11::jsonb,
-             $12, 0, $13::uuid[], 'open', 0.8)`,
+             $12, 0, $13::uuid[], 'open', 0.8,
+             $14, $15::jsonb, $16::jsonb, $17, $18, $19,
+             $20, $21::uuid[], $22, $23::uuid[])`,
     [
       id,
       input.companyId,
@@ -2953,6 +3076,16 @@ async function createDiscussion(
       JSON.stringify({ source: "api" }),
       speakerMode,
       toPgArr(speakerOrder),
+      successCriterion,
+      JSON.stringify(scopeIn),
+      JSON.stringify(scopeOut),
+      decisionDeadlineIso,
+      motivatingTensionId,
+      expectedOutputKind,
+      decisionOwnerAgentId,
+      toPgArr(consultedAgentIds),
+      ratifierAgentId,
+      toPgArr(informedAgentIds),
     ],
   );
   const rows = await dbCtx.query<CircleDiscussionRow>(
@@ -3190,15 +3323,16 @@ async function advanceCircleDiscussions(): Promise<{ checked: number; advanced: 
 /**
  * Advance a single discussion through one round step. Handles both
  * `parallel` mode (all turns spawn at once; round completes when all done)
- * and `reverse-priority`/`roundtable` mode (one turn at a time; round
- * completes when current_speaker_idx reaches participants.length).
+ * and the sequential modes — `psych_safety` (alias: legacy `reverse-priority`)
+ * and `roundtable` — which spawn one turn at a time; the round completes when
+ * `current_speaker_idx` reaches `participants.length`.
  */
 async function advanceOneRound(
   discussion: CircleDiscussionRow,
   currentRound: number,
 ): Promise<void> {
   if (!dbCtx) return;
-  const mode = discussion.speaker_mode ?? "reverse-priority";
+  const mode = discussion.speaker_mode ?? "psych_safety";
 
   if (mode === "parallel") {
     const counts = await dbCtx.query<{ status: string; total: number }>(
@@ -3302,6 +3436,141 @@ async function advanceOneRound(
 }
 
 /**
+ * Phase 1.15h-i #9 — Bridge a concluding discussion into an `idm_approvals`
+ * row so the canonical 6-phase IDM state machine runs on any objections.
+ *
+ * Fires only when the discussion has at least one `support-with-objection`
+ * or `block` commitment. Skips when no objectors (the discussion-layer
+ * commitment threshold path is sufficient) or when the discussion has no
+ * circle_id (idm_approvals.circle_id is NOT NULL — cross-circle 1:1
+ * discussions cannot bridge). Idempotent on `discussion.idm_approval_id`.
+ *
+ * The resulting IDM row is seeded directly in phase `objections`, skipping
+ * `clarifying` + `reactions` since those already happened in the discussion.
+ * Each objector commitment becomes one `idm_objections` row (body =
+ * commitment.reason). From here the existing deadline sweeper drives
+ * `idmAdvance`, and Facilitator agents resolve via the existing
+ * `holacracy-idm-validate-objection` + `holacracy-idm-integrate` tools.
+ */
+async function bridgeDiscussionToIdm(
+  discussion: CircleDiscussionRow,
+): Promise<{ idmApprovalId: string; objectionCount: number } | null> {
+  if (!dbCtx) return null;
+  if (discussion.idm_approval_id) return null; // idempotent
+  if (!discussion.circle_id) return null; // idm_approvals.circle_id is NOT NULL
+
+  const objectors = await dbCtx.query<{ agent_id: string; signal: string; reason: string | null }>(
+    `SELECT agent_id::text AS agent_id, signal, reason
+       FROM public.discussion_commitments
+      WHERE discussion_id = $1
+        AND signal IN ('support-with-objection', 'block')
+      ORDER BY signaled_at ASC`,
+    [discussion.id],
+  );
+  if (objectors.length === 0) return null;
+
+  // Parse the Secretary's structured payload when possible — surface
+  // `current_proposal` or fall back to `summary`/raw text as the IDM
+  // proposal content. The IDM proposal schema accepts arbitrary `content`
+  // (z.unknown), so any of these shapes is valid downstream.
+  let proposalContent: unknown = discussion.conclusion ?? "(no conclusion text)";
+  if (discussion.conclusion) {
+    try {
+      const fenceMatch = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(discussion.conclusion);
+      const candidate = fenceMatch && fenceMatch[1] ? fenceMatch[1] : discussion.conclusion.trim();
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object") {
+        const rec = parsed as Record<string, unknown>;
+        if (typeof rec.current_proposal === "string" && rec.current_proposal.trim().length > 0) {
+          proposalContent = rec.current_proposal;
+        } else if (typeof rec.summary === "string" && rec.summary.trim().length > 0) {
+          proposalContent = rec.summary;
+        } else {
+          proposalContent = parsed;
+        }
+      }
+    } catch {
+      /* keep raw text */
+    }
+  }
+
+  const kind = discussion.expected_output_kind ?? discussion.conclusion_kind ?? "note";
+
+  let proposed: { idm: IdmApprovalRow; approvalId: string };
+  try {
+    proposed = await idmPropose({
+      companyId: discussion.company_id,
+      circleId: discussion.circle_id,
+      ...(discussion.motivating_tension_id ? { tensionId: discussion.motivating_tension_id } : {}),
+      ...(discussion.initiated_by_agent_id ? { proposerAgentId: discussion.initiated_by_agent_id } : {}),
+      proposal: { kind, content: proposalContent },
+    });
+  } catch (err) {
+    console.warn(
+      "[holacracy] bridgeDiscussionToIdm: idmPropose failed for discussion",
+      discussion.id,
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+
+  // Skip clarifying + reactions + amend_or_clarify — those happened in the
+  // discussion. Drop straight into `objections` with a fresh deadline.
+  await setIdmPhase(proposed.idm.id, IDM_PHASES.objections);
+
+  // Seed one idm_objections row per objector commitment. Resolve their
+  // role_id in this circle (best-effort — NULL is allowed on raised_by_role_id).
+  let objectionCount = 0;
+  for (const o of objectors) {
+    let roleId: string | null = null;
+    try {
+      const roleRows = await dbCtx.query<{ id: string }>(
+        `SELECT r.id::text AS id
+           FROM ${tbl("role_assignments")} ra
+           JOIN ${tbl("roles")} r ON r.id = ra.role_id
+          WHERE ra.agent_id = $1 AND r.circle_id = $2
+          ORDER BY ra.created_at ASC NULLS LAST
+          LIMIT 1`,
+        [o.agent_id, discussion.circle_id],
+      );
+      roleId = roleRows[0]?.id ?? null;
+    } catch {
+      /* role_assignments.created_at may not exist on every install */
+    }
+    const body = (o.reason ?? "").trim().length > 0
+      ? (o.reason as string)
+      : `[bridged from discussion ${discussion.id.slice(0, 8)}] signal=${o.signal} (no reason given)`;
+    try {
+      await dbCtx.execute(
+        `INSERT INTO ${tbl("idm_objections")} (id, idm_id, raised_by_agent_id, raised_by_role_id, body) VALUES ($1, $2, $3, $4, $5)`,
+        [randomUUID(), proposed.idm.id, o.agent_id, roleId, body],
+      );
+      objectionCount += 1;
+    } catch (err) {
+      console.warn(
+        "[holacracy] bridgeDiscussionToIdm: failed to seed objection",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  // Link the IDM approval back onto the discussion row.
+  try {
+    await dbCtx.execute(
+      `UPDATE public.circle_discussions SET idm_approval_id = $2 WHERE id = $1`,
+      [discussion.id, proposed.idm.id],
+    );
+  } catch (err) {
+    console.warn(
+      "[holacracy] bridgeDiscussionToIdm: failed to back-link idm_approval_id",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
+  return { idmApprovalId: proposed.idm.id, objectionCount };
+}
+
+/**
  * Phase 1.15e — Check the commitment threshold for a discussion in
  * `awaiting_commitments` phase. If ≥ threshold * participants have signaled
  * `support` or `support-with-objection` AND there are no unresolved blocks,
@@ -3334,6 +3603,20 @@ async function maybeConcludeViaCommitments(
   const supportingFraction = totalParticipants > 0 ? supporting / totalParticipants : 0;
 
   if (block === 0 && supportingFraction >= threshold) {
+    // Phase 1.15h-i #9 — If any objectors signaled support-with-objection,
+    // open an IDM approval BEFORE flipping to concluded so the canonical
+    // 6-phase state machine runs on those objections.
+    let bridge: { idmApprovalId: string; objectionCount: number } | null = null;
+    if (supportWithObjection > 0) {
+      try {
+        bridge = await bridgeDiscussionToIdm(discussion);
+      } catch (err) {
+        console.warn(
+          "[holacracy] bridgeDiscussionToIdm threw during conclude path:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
     await dbCtx.execute(
       `UPDATE public.circle_discussions
           SET phase = 'concluded', status = 'concluded', concluded_at = NOW()
@@ -3347,6 +3630,17 @@ async function maybeConcludeViaCommitments(
         supporting,
         supportingFraction,
       });
+      if (bridge) {
+        await publishDiscussionEvent(discussion, {
+          kind: "discussion-bridged-to-idm",
+          idmApprovalId: bridge.idmApprovalId,
+          objectionCount: bridge.objectionCount,
+          phase: IDM_PHASES.objections,
+        });
+        console.log(
+          `[holacracy] bridged discussion ${discussion.id.slice(0, 8)} → IDM ${bridge.idmApprovalId.slice(0, 8)} (${bridge.objectionCount} objection(s))`,
+        );
+      }
     } catch {
       /* noop */
     }
@@ -3357,6 +3651,19 @@ async function maybeConcludeViaCommitments(
   const startedAt = discussion.started_at ? new Date(discussion.started_at).getTime() : Date.now();
   const ageHours = (Date.now() - startedAt) / (1000 * 60 * 60);
   if (ageHours > 24 && supportingFraction < threshold) {
+    // Phase 1.15h-i #9 — Even on deadlock, if there are objector signals
+    // they deserve to run through IDM rather than being silently dropped.
+    let bridge: { idmApprovalId: string; objectionCount: number } | null = null;
+    if (supportWithObjection > 0 || block > 0) {
+      try {
+        bridge = await bridgeDiscussionToIdm(discussion);
+      } catch (err) {
+        console.warn(
+          "[holacracy] bridgeDiscussionToIdm threw during deadlock path:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
     await dbCtx.execute(
       `UPDATE public.circle_discussions
           SET phase = 'concluded', status = 'concluded', concluded_at = NOW(),
@@ -3371,6 +3678,17 @@ async function maybeConcludeViaCommitments(
         supporting,
         supportingFraction,
       });
+      if (bridge) {
+        await publishDiscussionEvent(discussion, {
+          kind: "discussion-bridged-to-idm",
+          idmApprovalId: bridge.idmApprovalId,
+          objectionCount: bridge.objectionCount,
+          phase: IDM_PHASES.objections,
+        });
+        console.log(
+          `[holacracy] bridged deadlocked discussion ${discussion.id.slice(0, 8)} → IDM ${bridge.idmApprovalId.slice(0, 8)} (${bridge.objectionCount} objection(s))`,
+        );
+      }
     } catch {
       /* noop */
     }
@@ -3407,7 +3725,7 @@ async function checkCrossTalkBlock(
       `SELECT id, speaker_mode, current_speaker_idx, speaker_order, participant_agent_ids
          FROM public.circle_discussions
         WHERE status = 'open' AND phase = 'open'
-          AND speaker_mode IN ('reverse-priority', 'roundtable')
+          AND speaker_mode IN ('psych_safety', 'reverse-priority', 'roundtable')
           AND $1::uuid = ANY(participant_agent_ids)`,
       [agentId],
     );
@@ -3671,6 +3989,544 @@ async function runRequestOneOnOne(
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 1.15h-g1 — Steward / Concierge auto-healer.
+//
+// Runs every 5 minutes. Scans for 5 runtime pathologies and either heals
+// idempotently (broken adapter, runaway loop, stuck discussion, stale commit
+// phase) or escalates by raising an operational tension on the company's GCC
+// Lead Link circle (high failure-rate, no healthy peer to copy from).
+//
+// Idempotency: every heal/escalation action checks `public.activity_log` for
+// an existing entry with the same `[STEWARD:{kind}:{id}:{bucket}]` marker in
+// `entity_id` before firing. This keeps re-runs within the same 5-min bucket
+// (or 10-min / day bucket for loop / stuck / fail kinds) a no-op.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface StewardCounters { healed: number; escalated: number; checked: number }
+
+/**
+ * Find the company's GCC (root) circle. Used as escalation target when no
+ * better circle is available.
+ */
+async function stewardFindGccCircle(companyId: string): Promise<string | null> {
+  if (!dbCtx) return null;
+  const rows = await dbCtx.query<{ id: string }>(
+    `SELECT id FROM ${tbl("circles")} WHERE company_id = $1 AND parent_circle_id IS NULL LIMIT 1`,
+    [companyId],
+  );
+  return rows[0]?.id ?? null;
+}
+
+/**
+ * Has the Steward already acted on this entity in this bucket?
+ * Mirrors the accountability-scanner's idempotency-by-marker pattern but uses
+ * `public.activity_log.entity_id` (no schema change required).
+ */
+async function stewardAlreadyActed(marker: string): Promise<boolean> {
+  if (!dbCtx) return true; // fail safe
+  const rows = await dbCtx.query<{ id: string }>(
+    `SELECT id FROM public.activity_log WHERE entity_id = $1 LIMIT 1`,
+    [marker],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Raise an operational tension on the given circle, attributed to the
+ * Steward. Severity is encoded in the description JSON since tensions table
+ * has no severity column (mirrors accountability-scanner).
+ */
+async function raiseStewardTension(
+  circleId: string,
+  title: string,
+  description: Record<string, unknown>,
+  severity: "low" | "medium" | "high",
+): Promise<string | null> {
+  if (!dbCtx) return null;
+  const tensionId = randomUUID();
+  const body = JSON.stringify({ ...description, severity, source: "steward-healer" });
+  try {
+    await dbCtx.execute(
+      `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type) VALUES ($1, $2, NULL, $3, $4, 'operational')`,
+      [tensionId, circleId, title, body],
+    );
+    return tensionId;
+  } catch (err) {
+    console.warn("[holacracy] steward: raise tension failed:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+/**
+ * Steward heal/escalate. See manifest job description for full scope.
+ * Returns counters for observability.
+ */
+async function runStewardHealer(): Promise<StewardCounters> {
+  if (!dbCtx) return { healed: 0, escalated: 0, checked: 0 };
+  const counters: StewardCounters = { healed: 0, escalated: 0, checked: 0 };
+  const now = new Date();
+  const today = now.toISOString().split("T")[0];
+  const bucket5min = Math.floor(now.getTime() / (5 * 60 * 1000));
+  const bucket10min = Math.floor(now.getTime() / (10 * 60 * 1000));
+
+  // ── 1. Broken adapter config ────────────────────────────────────────────
+  // process-type agents missing `command`, or hermes_local missing
+  // `hermesCommand`, or missing adapter_type. Heal: copy from a healthy peer
+  // in the same company.
+  try {
+    const broken = await dbCtx.query<{
+      id: string;
+      company_id: string;
+      name: string;
+      adapter_type: string | null;
+      adapter_config: Record<string, unknown> | null;
+    }>(
+      `SELECT id, company_id, name, adapter_type, adapter_config FROM public.agents
+        WHERE status != 'deleted'
+          AND (
+            adapter_type IS NULL
+            OR (adapter_type = 'process' AND (adapter_config IS NULL OR NOT (adapter_config ? 'command')))
+            OR (adapter_type = 'hermes_local' AND (adapter_config IS NULL OR NOT (adapter_config ? 'hermesCommand')))
+          )`,
+      [],
+    );
+    counters.checked += broken.length;
+    for (const agent of broken) {
+      const marker = `[STEWARD:adapter:${agent.id}:${today}]`;
+      if (await stewardAlreadyActed(marker)) continue;
+      const peers = await dbCtx.query<{ adapter_type: string; adapter_config: Record<string, unknown> }>(
+        `SELECT adapter_type, adapter_config FROM public.agents
+          WHERE company_id = $1 AND id != $2 AND status != 'deleted'
+            AND adapter_type = 'hermes_local'
+            AND adapter_config ? 'hermesCommand'
+          LIMIT 1`,
+        [agent.company_id, agent.id],
+      );
+      if (peers.length > 0) {
+        const peer = peers[0];
+        await dbCtx.execute(
+          `UPDATE public.agents SET adapter_type = $2, adapter_config = $3::jsonb, updated_at = NOW() WHERE id = $1`,
+          [agent.id, peer.adapter_type, JSON.stringify(peer.adapter_config)],
+        );
+        counters.healed += 1;
+        if (activityCtx) {
+          await activityCtx.log({
+            companyId: agent.company_id,
+            message: `${marker} Healed broken adapter config for agent ${agent.name} by copying from healthy peer.`,
+            entityType: "agent",
+            entityId: marker,
+            metadata: { agentId: agent.id, kind: "adapter", previousType: agent.adapter_type, newType: peer.adapter_type },
+          });
+        }
+      } else {
+        const gcc = await stewardFindGccCircle(agent.company_id);
+        if (gcc) {
+          await raiseStewardTension(
+            gcc,
+            `[Steward] Agent ${agent.name} has broken adapter config and no healthy peer to copy from`,
+            { agent_id: agent.id, agent_name: agent.name, adapter_type: agent.adapter_type, scan_date: today },
+            "medium",
+          );
+        }
+        counters.escalated += 1;
+        if (activityCtx) {
+          await activityCtx.log({
+            companyId: agent.company_id,
+            message: `${marker} Escalated broken adapter — no healthy peer for agent ${agent.name}.`,
+            entityType: "agent",
+            entityId: marker,
+            metadata: { agentId: agent.id, kind: "adapter-escalated" },
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[holacracy] steward: adapter pathology scan failed:", err instanceof Error ? err.message : String(err));
+  }
+
+  // ── 2. High failure rate ────────────────────────────────────────────────
+  // >=5 failed heartbeat runs with the same error_code in the last 1h.
+  // Heal: suspend agent + raise tension to GCC.
+  try {
+    const failBursts = await dbCtx.query<{
+      agent_id: string;
+      company_id: string;
+      error_code: string;
+      fail_count: number;
+    }>(
+      `SELECT hr.agent_id, hr.company_id, hr.error_code, COUNT(*)::int AS fail_count
+         FROM public.heartbeat_runs hr
+        WHERE hr.status = 'failed'
+          AND hr.error_code IS NOT NULL
+          AND hr.created_at >= NOW() - INTERVAL '1 hour'
+        GROUP BY hr.agent_id, hr.company_id, hr.error_code
+        HAVING COUNT(*) >= 5`,
+      [],
+    );
+    counters.checked += failBursts.length;
+    for (const burst of failBursts) {
+      const marker = `[STEWARD:fail:${burst.agent_id}:${today}]`;
+      if (await stewardAlreadyActed(marker)) continue;
+      const agentRows = await dbCtx.query<{ name: string; status: string }>(
+        `SELECT name, status FROM public.agents WHERE id = $1`,
+        [burst.agent_id],
+      );
+      const agentName = agentRows[0]?.name ?? burst.agent_id;
+      const agentStatus = agentRows[0]?.status ?? "unknown";
+      if (agentStatus !== "suspended") {
+        await dbCtx.execute(
+          `UPDATE public.agents SET status = 'suspended', pause_reason = $2, paused_at = NOW(), updated_at = NOW() WHERE id = $1`,
+          [burst.agent_id, `[STEWARD] auto-suspended: ${burst.fail_count} failures in 1h with error_code=${burst.error_code}`],
+        );
+      }
+      const gcc = await stewardFindGccCircle(burst.company_id);
+      if (gcc) {
+        await raiseStewardTension(
+          gcc,
+          `[Steward] Agent ${agentName} suspended — ${burst.fail_count} failures (${burst.error_code}) in last 1h`,
+          {
+            agent_id: burst.agent_id,
+            agent_name: agentName,
+            error_code: burst.error_code,
+            fail_count: burst.fail_count,
+            window: "1h",
+            scan_date: today,
+          },
+          "high",
+        );
+      }
+      counters.healed += 1;
+      counters.escalated += 1;
+      if (activityCtx) {
+        await activityCtx.log({
+          companyId: burst.company_id,
+          message: `${marker} Suspended agent ${agentName} after ${burst.fail_count} failures (error_code=${burst.error_code}) in 1h.`,
+          entityType: "agent",
+          entityId: marker,
+          metadata: { agentId: burst.agent_id, kind: "fail", errorCode: burst.error_code, failCount: burst.fail_count },
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("[holacracy] steward: failure-rate scan failed:", err instanceof Error ? err.message : String(err));
+  }
+
+  // ── 3. Runaway loop ─────────────────────────────────────────────────────
+  // >=30 heartbeat_runs in the last 10 minutes regardless of wakeReason.
+  // Heal: disable wake-on-demand in agents.metadata.policy + raise tension.
+  try {
+    const loops = await dbCtx.query<{ agent_id: string; company_id: string; run_count: number }>(
+      `SELECT hr.agent_id, hr.company_id, COUNT(*)::int AS run_count
+         FROM public.heartbeat_runs hr
+        WHERE hr.created_at >= NOW() - INTERVAL '10 minutes'
+        GROUP BY hr.agent_id, hr.company_id
+        HAVING COUNT(*) >= 30`,
+      [],
+    );
+    counters.checked += loops.length;
+    for (const loop of loops) {
+      const marker = `[STEWARD:loop:${loop.agent_id}:${bucket10min}]`;
+      if (await stewardAlreadyActed(marker)) continue;
+      const agentRows = await dbCtx.query<{ name: string }>(
+        `SELECT name FROM public.agents WHERE id = $1`,
+        [loop.agent_id],
+      );
+      const agentName = agentRows[0]?.name ?? loop.agent_id;
+      // Patch metadata.policy.wakeOnDemand = false. jsonb_set creates the
+      // intermediate `policy` object when missing (`true` last arg).
+      await dbCtx.execute(
+        `UPDATE public.agents
+            SET metadata = jsonb_set(
+                  COALESCE(metadata, '{}'::jsonb),
+                  '{policy,wakeOnDemand}',
+                  'false'::jsonb,
+                  true
+                ),
+                updated_at = NOW()
+          WHERE id = $1`,
+        [loop.agent_id],
+      );
+      const gcc = await stewardFindGccCircle(loop.company_id);
+      if (gcc) {
+        await raiseStewardTension(
+          gcc,
+          `[Steward] Runaway loop detected — ${agentName} fired ${loop.run_count} heartbeats in 10min; wakeOnDemand disabled`,
+          {
+            agent_id: loop.agent_id,
+            agent_name: agentName,
+            run_count: loop.run_count,
+            window: "10m",
+            bucket: bucket10min,
+          },
+          "high",
+        );
+      }
+      counters.healed += 1;
+      counters.escalated += 1;
+      if (activityCtx) {
+        await activityCtx.log({
+          companyId: loop.company_id,
+          message: `${marker} Disabled wakeOnDemand for ${agentName} after ${loop.run_count} runs in 10min.`,
+          entityType: "agent",
+          entityId: marker,
+          metadata: { agentId: loop.agent_id, kind: "loop", runCount: loop.run_count, bucket: bucket10min },
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("[holacracy] steward: runaway-loop scan failed:", err instanceof Error ? err.message : String(err));
+  }
+
+  // ── 4. Stuck discussion ─────────────────────────────────────────────────
+  // phase='open', started >60min ago, no completed turn issue in last 30min.
+  // Phase 1.15h-i #2 — Grove: when a `ratifier_agent_id` is set, ESCALATE to
+  // the ratifier (transition to awaiting_commitments + spawn a decide-issue
+  // assigned to them) instead of auto-deadlocking. Grove's pre-flight makes
+  // the ratifier explicit; ignoring them would defeat the point. When no
+  // ratifier is set, fall back to the legacy auto-deadlock behaviour.
+  try {
+    const stuck = await dbCtx.query<{
+      id: string;
+      company_id: string;
+      circle_id: string | null;
+      topic: string;
+      a2a_context_id: string;
+      ratifier_agent_id: string | null;
+      decision_deadline: string | null;
+    }>(
+      `SELECT d.id, d.company_id, d.circle_id, d.topic,
+              d.a2a_context_id, d.ratifier_agent_id,
+              d.decision_deadline::text AS decision_deadline
+         FROM public.circle_discussions d
+        WHERE d.status = 'open'
+          AND d.phase = 'open'
+          AND d.started_at < NOW() - INTERVAL '60 minutes'
+          AND NOT EXISTS (
+            SELECT 1 FROM public.issues i
+             WHERE i.origin_id = d.id
+               AND i.origin_kind = 'discussion:turn'
+               AND i.status = 'done'
+               AND i.completed_at >= NOW() - INTERVAL '30 minutes'
+          )`,
+      [],
+    );
+    counters.checked += stuck.length;
+    for (const d of stuck) {
+      const marker = `[STEWARD:stuck:${d.id}:${today}]`;
+      if (await stewardAlreadyActed(marker)) continue;
+
+      if (d.ratifier_agent_id) {
+        // Grove escalation: hand the decision to the named ratifier instead
+        // of deadlocking. Move phase → awaiting_commitments so their
+        // commit-to-conclusion signal closes the discussion, and spawn a
+        // decide-issue assigned to them with explicit instructions.
+        await dbCtx.execute(
+          `UPDATE public.circle_discussions
+              SET phase = 'awaiting_commitments'
+            WHERE id = $1 AND phase = 'open'`,
+          [d.id],
+        );
+        const projectInfo = d.circle_id ? await resolveCircleProject(d.circle_id) : null;
+        const projectId = projectInfo?.projectId ?? null;
+        const issueId = randomUUID();
+        const description = [
+          `Discussion ${d.id} ("${d.topic.slice(0, 200)}") has stalled past its decision deadline (60min without progress).`,
+          "",
+          "As the named **ratifier** for this discussion (per Grove's pre-flight: \"Who will ratify or veto the decision?\"), you must decide it now.",
+          "",
+          "Reply via `holacracy-commit-to-conclusion` with either:",
+          "- `support` — accept the discussion as it stands and conclude it.",
+          "- `block` — veto with a written objection (forwarded to IDM).",
+          "",
+          d.decision_deadline ? `Original decision deadline: ${d.decision_deadline}` : "",
+          "",
+          `Discussion id: ${d.id}`,
+          `Context id: ${d.a2a_context_id}`,
+        ].filter((line) => line !== "").join("\n");
+        const title = `[Ratifier] Decide stalled discussion: ${d.topic.slice(0, 120)}`;
+        try {
+          await dbCtx.execute(
+            `INSERT INTO public.issues
+               (id, company_id, project_id, title, description, status, kind, priority,
+                assignee_agent_id, origin_kind, origin_id, origin_fingerprint,
+                a2a_context_id)
+             VALUES ($1, $2, $3, $4, $5, 'backlog', 'next_action', 'high', $6, $7, $8, 'ratifier-call', $9)`,
+            [
+              issueId,
+              d.company_id,
+              projectId,
+              title,
+              description,
+              d.ratifier_agent_id,
+              "discussion:ratifier-call",
+              d.id,
+              d.a2a_context_id,
+            ],
+          );
+        } catch (insertErr) {
+          // If the same fingerprint already exists (re-run), skip silently.
+          const msg = insertErr instanceof Error ? insertErr.message : String(insertErr);
+          if (!/duplicate|unique/i.test(msg)) {
+            console.warn("[holacracy] steward: ratifier-call insert failed:", msg);
+          }
+        }
+        // Best-effort: publish a discussion event so the ratifier wakes.
+        try {
+          const refreshed = await loadDiscussion(d.id);
+          if (refreshed) {
+            await publishDiscussionEvent(refreshed, {
+              kind: "discussion-ratifier-called",
+              ratifierAgentId: d.ratifier_agent_id,
+              issueId,
+              reason: "stalled-60min",
+            });
+          }
+        } catch {
+          /* noop */
+        }
+        const targetCircle = d.circle_id ?? (await stewardFindGccCircle(d.company_id));
+        if (targetCircle) {
+          await raiseStewardTension(
+            targetCircle,
+            `[Steward] Discussion stalled → ratifier called: ${d.topic.slice(0, 120)}`,
+            {
+              discussion_id: d.id,
+              topic: d.topic,
+              reason: "stalled-open-phase",
+              action: "escalated-to-ratifier",
+              ratifier_agent_id: d.ratifier_agent_id,
+              ratifier_issue_id: issueId,
+              scan_date: today,
+            },
+            "medium",
+          );
+        }
+        counters.escalated += 1;
+        if (activityCtx) {
+          await activityCtx.log({
+            companyId: d.company_id,
+            message: `${marker} Escalated stuck discussion to ratifier: ${d.topic.slice(0, 80)}`,
+            entityType: "discussion",
+            entityId: marker,
+            metadata: {
+              discussionId: d.id,
+              kind: "stuck-ratifier-called",
+              circleId: d.circle_id,
+              ratifierAgentId: d.ratifier_agent_id,
+              ratifierIssueId: issueId,
+            },
+          });
+        }
+        continue;
+      }
+
+      // No ratifier set — fall back to legacy auto-deadlock.
+      await dbCtx.execute(
+        `UPDATE public.circle_discussions
+            SET phase = 'concluded',
+                status = 'concluded',
+                conclusion = $2,
+                conclusion_kind = 'deadlocked',
+                concluded_at = NOW()
+          WHERE id = $1 AND status = 'open'`,
+        [d.id, "[STEWARD] auto-concluded after 60min stall"],
+      );
+      // Cancel still-open turn issues so agents stop working on them.
+      await dbCtx.execute(
+        `UPDATE public.issues
+            SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW()
+          WHERE origin_id = $1
+            AND origin_kind IN ('discussion:turn', 'discussion:summary')
+            AND status IN ('backlog', 'todo', 'in_progress')`,
+        [d.id],
+      );
+      const targetCircle = d.circle_id ?? (await stewardFindGccCircle(d.company_id));
+      if (targetCircle) {
+        await raiseStewardTension(
+          targetCircle,
+          `[Steward] Discussion auto-concluded after 60min stall: ${d.topic.slice(0, 120)}`,
+          { discussion_id: d.id, topic: d.topic, reason: "stalled-open-phase", scan_date: today },
+          "medium",
+        );
+      }
+      counters.healed += 1;
+      counters.escalated += 1;
+      if (activityCtx) {
+        await activityCtx.log({
+          companyId: d.company_id,
+          message: `${marker} Auto-concluded stuck discussion: ${d.topic.slice(0, 80)}`,
+          entityType: "discussion",
+          entityId: marker,
+          metadata: { discussionId: d.id, kind: "stuck", circleId: d.circle_id },
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("[holacracy] steward: stuck-discussion scan failed:", err instanceof Error ? err.message : String(err));
+  }
+
+  // ── 5. Stale awaiting_commitments ──────────────────────────────────────
+  // phase='awaiting_commitments' with no new commit signal in 24h.
+  try {
+    const stale = await dbCtx.query<{ id: string; company_id: string; circle_id: string | null; topic: string }>(
+      `SELECT d.id, d.company_id, d.circle_id, d.topic
+         FROM public.circle_discussions d
+        WHERE d.status = 'open'
+          AND d.phase = 'awaiting_commitments'
+          AND NOT EXISTS (
+            SELECT 1 FROM public.discussion_commitments dc
+             WHERE dc.discussion_id = d.id
+               AND dc.signaled_at >= NOW() - INTERVAL '24 hours'
+          )`,
+      [],
+    );
+    counters.checked += stale.length;
+    for (const d of stale) {
+      const marker = `[STEWARD:stale-commit:${d.id}:${today}]`;
+      if (await stewardAlreadyActed(marker)) continue;
+      await dbCtx.execute(
+        `UPDATE public.circle_discussions
+            SET phase = 'concluded',
+                status = 'concluded',
+                conclusion = $2,
+                conclusion_kind = 'deadlocked',
+                concluded_at = NOW()
+          WHERE id = $1 AND status = 'open'`,
+        [d.id, "[STEWARD] auto-concluded — no commitment signals in 24h"],
+      );
+      const targetCircle = d.circle_id ?? (await stewardFindGccCircle(d.company_id));
+      if (targetCircle) {
+        await raiseStewardTension(
+          targetCircle,
+          `[Steward] Discussion auto-concluded — no commitments in 24h: ${d.topic.slice(0, 120)}`,
+          { discussion_id: d.id, topic: d.topic, reason: "stale-awaiting-commitments", scan_date: today },
+          "medium",
+        );
+      }
+      counters.healed += 1;
+      counters.escalated += 1;
+      if (activityCtx) {
+        await activityCtx.log({
+          companyId: d.company_id,
+          message: `${marker} Auto-concluded stale awaiting-commitments discussion: ${d.topic.slice(0, 80)}`,
+          entityType: "discussion",
+          entityId: marker,
+          metadata: { discussionId: d.id, kind: "stale-commit", circleId: d.circle_id },
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("[holacracy] steward: stale-commitments scan failed:", err instanceof Error ? err.message : String(err));
+  }
+
+  // Suppress unused-var warning when no buckets ever apply (e.g. only daily
+  // pathologies fire). `bucket5min` is reserved for finer-grained markers.
+  void bucket5min;
+
+  return counters;
+}
+
 const plugin = definePlugin({
   async setup(ctx) {
     dbCtx = ctx.db;
@@ -3678,6 +4534,7 @@ const plugin = definePlugin({
     approvalsCtx = ctx.approvals;
     issuesCtx = ctx.issues;
     mqttCtx = ctx.mqtt;
+    activityCtx = ctx.activity;
     // Seed global domain registry (idempotent, runs once per plugin start)
     try {
       await seedDefaultDomainRegistry();
@@ -4484,6 +5341,22 @@ const plugin = definePlugin({
       });
     });
 
+    // ── Phase 1.15h-g1 — Steward / Concierge auto-healer ─────────────────
+    // Runs every 5 minutes; scans for 5 runtime pathologies and either heals
+    // idempotently or escalates via tension to GCC Lead Link. See the
+    // `runStewardHealer` function near the top of this file for details.
+    ctx.jobs.register("steward-healer", async (_job) => {
+      try {
+        const result = await runStewardHealer();
+        console.log("[holacracy] steward-healer", result);
+      } catch (err) {
+        console.error(
+          "[holacracy] steward-healer failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    });
+
     // ── Phase 1.8 — Tactical Pulse routine ───────────────────────────────
     // Promotes the existing API-only `runTacticalPulse` into a scheduled
     // routine. Iterates every circle in every active company and snapshots
@@ -4598,7 +5471,7 @@ const plugin = definePlugin({
 
       type FeedItem =
         | { kind: "turn"; id: string; at: string; discussionId: string; agentId: string | null; agentName: string | null; roundNumber: number; isSummary: boolean; status: string; content: string | null; topic: string | null }
-        | { kind: "lifecycle"; id: string; at: string; discussionId: string; event: "opened" | "concluded"; topic: string; conclusion: string | null; conclusionKind: string | null }
+        | { kind: "lifecycle"; id: string; at: string; discussionId: string; event: "opened" | "concluded"; topic: string; conclusion: string | null; conclusionKind: string | null; idmApprovalId: string | null }
         | { kind: "commitment"; id: string; at: string; discussionId: string; agentId: string; agentName: string | null; signal: string; reason: string | null }
         | { kind: "comment"; id: string; at: string; issueId: string; issueTitle: string | null; authorAgentId: string | null; authorAgentName: string | null; authorUserId: string | null; body: string };
 
@@ -4631,6 +5504,7 @@ const plugin = definePlugin({
           topic: d.topic,
           conclusion: null,
           conclusionKind: null,
+          idmApprovalId: null,
         });
         if (d.status === "concluded" || d.phase === "concluded") {
           const concludedAt = (d as unknown as { concluded_at: string | null }).concluded_at;
@@ -4643,6 +5517,7 @@ const plugin = definePlugin({
             topic: d.topic,
             conclusion: (d as unknown as { conclusion: string | null }).conclusion ?? null,
             conclusionKind: (d as unknown as { conclusion_kind: string | null }).conclusion_kind ?? null,
+            idmApprovalId: (d as unknown as { idm_approval_id: string | null }).idm_approval_id ?? null,
           });
         }
         try {
@@ -4764,6 +5639,20 @@ const plugin = definePlugin({
         companyId: (params.companyId as string) ?? "",
         initiatedByAgentId: (params.initiatedByAgentId as string | null | undefined) ?? null,
         initiatedByUserId: (params.initiatedByUserId as string | null | undefined) ?? null,
+        // Phase 1.15h-h1 — SMART forwarding from UI / scripts.
+        successCriterion: params.successCriterion as string | undefined,
+        scopeIn: params.scopeIn as string[] | undefined,
+        scopeOut: params.scopeOut as string[] | undefined,
+        decisionDeadline: params.decisionDeadline as string | Date | undefined,
+        motivatingTensionId: params.motivatingTensionId as string | undefined,
+        expectedOutputKind: params.expectedOutputKind as string | undefined,
+        // Phase 1.15h-i #2 — Grove pre-flight forwarding.
+        decisionOwnerAgentId:
+          (params.decisionOwnerAgentId as string | null | undefined) ?? null,
+        consultedAgentIds: params.consultedAgentIds as string[] | undefined,
+        ratifierAgentId:
+          (params.ratifierAgentId as string | null | undefined) ?? null,
+        informedAgentIds: params.informedAgentIds as string[] | undefined,
       });
       if (!result.ok) throw new Error(result.error);
       return { discussionId: result.discussion.id, issueIds: result.issueIds };
@@ -7064,6 +7953,18 @@ ${policyList || "No policies defined yet."}
           initiatedByAgentId?: string;
           initiatedByUserId?: string;
           participantAgentIds?: string[];
+          // Phase 1.15h-h1 — SMART fields from API body.
+          successCriterion?: string;
+          scopeIn?: string[];
+          scopeOut?: string[];
+          decisionDeadline?: string;
+          motivatingTensionId?: string;
+          expectedOutputKind?: string;
+          // Phase 1.15h-i #2 — Grove pre-flight from API body.
+          decisionOwnerAgentId?: string | null;
+          consultedAgentIds?: string[];
+          ratifierAgentId?: string | null;
+          informedAgentIds?: string[];
         };
         const result = await createDiscussion({
           circleId: body.circleId ?? null,
@@ -7075,6 +7976,16 @@ ${policyList || "No policies defined yet."}
           initiatedByAgentId: body.initiatedByAgentId ?? null,
           initiatedByUserId: body.initiatedByUserId ?? null,
           participantAgentIds: body.participantAgentIds,
+          successCriterion: body.successCriterion,
+          scopeIn: body.scopeIn,
+          scopeOut: body.scopeOut,
+          decisionDeadline: body.decisionDeadline,
+          motivatingTensionId: body.motivatingTensionId,
+          expectedOutputKind: body.expectedOutputKind,
+          decisionOwnerAgentId: body.decisionOwnerAgentId ?? null,
+          consultedAgentIds: body.consultedAgentIds,
+          ratifierAgentId: body.ratifierAgentId ?? null,
+          informedAgentIds: body.informedAgentIds,
         });
         if (!result.ok) return { status: result.status, body: { error: result.error } };
         return {

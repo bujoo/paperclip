@@ -41,6 +41,24 @@ General Company Circle
 
 The **Circle Rep** from each sub-circle participates in the parent circle's meetings.
 
+### Example: Documentation Circle Decision Context
+
+**Created from**: MYA-5, MYA-127 — AI Intelligence + Onboarding (2026-05-27)
+
+**Problem**: No single team owned information flow. New agents scattered search across docs, Slack, code comments. Knowledge captured but not organized.
+
+**Decision**: Create Documentation circle to centralize ownership of onboarding, knowledge architecture, and documentation freshness.
+
+**Core roles established**:
+- **Doc Lead**: owns docs site tooling and architecture
+- **Technical Writer**: produces API/feature documentation
+- **Onboarding Designer**: creates playbooks for new role setup
+- **Knowledge Curator**: ingests AI research, produces daily digest
+
+**Design logic**: Each role has explicit accountability + domain. Tensions surface weekly in Tactical meetings. Governance decisions recorded with this circle context.
+
+**Related**: MYA-172 (Knowledge Graph runbook), MYA-173 (decision context in docs)
+
 ## Governance Meetings
 
 Run bi-weekly to:

@@ -1,0 +1,12 @@
+import pgModule from '/Users/tom/paperclip/node_modules/.pnpm/pg@8.18.0/node_modules/pg/lib/index.js';
+const c = new pgModule.Client({host:'127.0.0.1', port:54329, user:'paperclip', database:'paperclip', password:'paperclip'});
+await c.connect();
+const r = await c.query("SELECT to_regclass('public.circle_discussions') AS cd, to_regclass('public.agent_perceptions') AS ap, to_regclass('public.agents') AS ag, to_regclass('public.agent_trust_signals') AS ats, to_regclass('public.discussion_commitments') AS dc");
+console.log(r.rows);
+const m = await c.query("SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id DESC LIMIT 10");
+console.log('Recent migrations:', m.rows.map(r => ({hash: r.hash.substring(0,20), created_at: r.created_at})));
+const cols = await c.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='agent_perceptions'");
+console.log('agent_perceptions cols:', cols.rows.map(r=>r.column_name));
+const cd_cols = await c.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='circle_discussions'");
+console.log('circle_discussions cols:', cd_cols.rows.map(r=>r.column_name));
+await c.end();

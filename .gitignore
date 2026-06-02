@@ -50,6 +50,9 @@ diagnostics/
 # Doc maintenance cursor
 .doc-review-cursor
 
+# Local docker compose overrides (developer port remap, etc.)
+docker/docker-compose.override.local.yml
+
 # Playwright
 tests/e2e/test-results/
 tests/e2e/playwright-report/

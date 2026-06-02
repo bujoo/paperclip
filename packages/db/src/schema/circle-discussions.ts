@@ -48,8 +48,13 @@ export const circleDiscussions = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     concludedAt: timestamp("concluded_at", { withTimezone: true }),
     metadata: jsonb("metadata"),
-    /** Phase 1.15c — speaker mode controls turn ordering. */
-    speakerMode: text("speaker_mode").notNull().default("reverse-priority"),
+    /** Phase 1.15c — speaker mode controls turn ordering.
+     *  Phase 1.15h-i — Default is `psych_safety` (was `reverse-priority`).
+     *  Both values are accepted as aliases by the worker for backwards
+     *  compat with existing scripts; `psych_safety` is the honest label —
+     *  "Lead Link goes last" is a Grove/psychological-safety overlay, not
+     *  Holacracy doctrine (Robertson treats reactions as symmetric). */
+    speakerMode: text("speaker_mode").notNull().default("psych_safety"),
     /** Index into speakerOrder for the agent currently speaking. */
     currentSpeakerIdx: integer("current_speaker_idx").notNull().default(0),
     /** Pre-computed speaker order (uuid[]). When non-empty, scheduler uses it
@@ -64,6 +69,38 @@ export const circleDiscussions = pgTable(
     requiredCommitmentThreshold: real("required_commitment_threshold")
       .notNull()
       .default(0.8),
+    /** Phase 1.15h-h1 — SMART fields. The discussion-mode preamble surfaces
+     *  these so agents know what "done" looks like and converge on a concrete
+     *  artifact instead of producing free-form reactions. */
+    successCriterion: text("success_criterion"),
+    scopeIn: jsonb("scope_in").default(sql`'[]'::jsonb`),
+    scopeOut: jsonb("scope_out").default(sql`'[]'::jsonb`),
+    decisionDeadline: timestamp("decision_deadline", { withTimezone: true }),
+    motivatingTensionId: uuid("motivating_tension_id"),
+    /** 'policy' | 'agreement' | 'next_action' | 'role' | 'tension_forward'
+     *  | 'metric_change' | 'strategy_update' | 'note'. */
+    expectedOutputKind: text("expected_output_kind"),
+    /** Phase 1.15h-i #9 — Soft pointer to plugin-holacracy `idm_approvals.id`.
+     *  Populated by the worker when a discussion concludes with
+     *  `support-with-objection` or `block` signals and the bridge auto-opens
+     *  an IDM approval to run those objections through the canonical
+     *  6-phase state machine. NULL when no IDM follow-up was needed. */
+    idmApprovalId: uuid("idm_approval_id"),
+    /** Phase 1.15h-i #2 — Grove pre-flight questions (High Output Management,
+     *  ch. 5). For any decision-meeting Grove prescribes: WHAT decides (topic),
+     *  WHEN (decision_deadline above), WHO DECIDES (decision_owner_agent_id),
+     *  WHO IS CONSULTED (consulted_agent_ids), WHO RATIFIES / VETOES
+     *  (ratifier_agent_id — typically Lead Link), WHO IS INFORMED
+     *  (informed_agent_ids). All optional; the steward's 60-min stall healer
+     *  calls the ratifier when known instead of auto-deadlocking. */
+    decisionOwnerAgentId: uuid("decision_owner_agent_id"),
+    consultedAgentIds: uuid("consulted_agent_ids")
+      .array()
+      .default(sql`'{}'::uuid[]`),
+    ratifierAgentId: uuid("ratifier_agent_id"),
+    informedAgentIds: uuid("informed_agent_ids")
+      .array()
+      .default(sql`'{}'::uuid[]`),
   },
   (table) => ({
     circleStatusIdx: index("circle_discussions_circle_status_idx").on(

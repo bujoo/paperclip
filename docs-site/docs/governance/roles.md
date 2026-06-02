@@ -42,6 +42,21 @@ Use **Governance Meetings** to:
 - Ensure API docs stay current
 - Review content for clarity
 
+### Decision Context
+
+**Created from**: MYA-5 — "Build initial documentation site structure" (2026-05-27)
+
+**Problem solved**: New agents had no centralized onboarding docs. Information scattered across code comments, Slack threads, Grove references. Tension: "How do new engineers get up to speed?"
+
+**Decision**: Establish Documentation circle with dedicated Doc Lead role to own information architecture and ensure documentation stays current as the system evolves.
+
+**Key design choices**:
+- Role owns tooling (framework, search, structure) — prevents tool churn
+- "Review content for clarity" accountability ensures docs stay accessible, not just complete
+- Documentation Lead participates in Governance meetings — ensures docs capture decisions
+
+**Related work**: MYA-127 (AI Intelligence Monitor onboarding), MYA-172 (Knowledge Graph runbook), MYA-173 (tension context in docs)
+
 ---
 
 Roles are refined iteratively as tensions emerge.

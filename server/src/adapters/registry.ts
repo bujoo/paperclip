@@ -369,12 +369,257 @@ const hermesLocalAdapter: ServerAdapterModule = {
         ? runtimeConfigForHermes.companyDnaMarkdown.trim()
         : "";
 
+    // Phase 1.15h-g2 — discussion-mode preamble. When the heartbeat injects
+    // a `discussion:turn` issue, it also sets `discussionMode = true` so the
+    // wrapper can prepend a conversational instruction telling the agent HOW
+    // to engage in a reactions round (voice substantive view, ground in role,
+    // build on peers, etc.) instead of merely acknowledging context.
+    //
+    // Phase 1.15h-h2 — SMART scoping + per-role synthesis variants.
+    // When the heartbeat surfaces SMART context + discussionRole, the preamble
+    // (a) injects DEADLINE / SUCCESS CRITERION / SCOPE / EXPECTED OUTPUT,
+    // (b) swaps in role-specific blocks for Lead Link (synthesis) and
+    // Secretary on summary turns (capture), and (c) appends an HTTP-bridge
+    // ledger so agents know how to ESCALATE via Paperclip API instead of
+    // emitting prose-only handovers.
+    const isDiscussionTurn = runtimeConfigForHermes.discussionMode === true;
+
+    type DiscussionSmart = {
+      successCriterion?: string | null;
+      scopeIn?: string[] | null;
+      scopeOut?: string[] | null;
+      decisionDeadline?: string | null;
+      expectedOutputKind?: string | null;
+      motivatingTensionId?: string | null;
+      hoursRemaining?: number | null;
+      // Phase 1.15h-i #2 — Grove pre-flight (HOM ch. 5).
+      decisionOwnerAgentId?: string | null;
+      decisionOwnerName?: string | null;
+      ratifierAgentId?: string | null;
+      ratifierName?: string | null;
+      consultedAgentIds?: string[] | null;
+      consultedNames?: string[] | null;
+      informedAgentIds?: string[] | null;
+      informedNames?: string[] | null;
+    };
+    const smart =
+      isDiscussionTurn && runtimeConfigForHermes.discussionSmart &&
+      typeof runtimeConfigForHermes.discussionSmart === "object"
+        ? (runtimeConfigForHermes.discussionSmart as DiscussionSmart)
+        : null;
+    const discussionRole =
+      isDiscussionTurn && typeof runtimeConfigForHermes.discussionRole === "string"
+        ? (runtimeConfigForHermes.discussionRole as string).toLowerCase()
+        : "";
+    const discussionTurnKind =
+      isDiscussionTurn && typeof runtimeConfigForHermes.discussionTurnKind === "string"
+        ? (runtimeConfigForHermes.discussionTurnKind as string)
+        : "";
+    const isSummaryTurn = discussionTurnKind === "discussion:summary";
+
+    const expectedKindLabel =
+      smart && typeof smart.expectedOutputKind === "string" && smart.expectedOutputKind.trim().length > 0
+        ? smart.expectedOutputKind.trim()
+        : "next_action";
+
+    const smartBlock = smart
+      ? (() => {
+          const deadlineText =
+            smart.decisionDeadline
+              ? `${smart.decisionDeadline}${
+                  typeof smart.hoursRemaining === "number"
+                    ? ` (${Math.max(0, Math.round(smart.hoursRemaining))}h remaining)`
+                    : ""
+                }`
+              : "unset";
+          const inList = Array.isArray(smart.scopeIn) && smart.scopeIn.length > 0
+            ? smart.scopeIn.join(", ")
+            : "(unspecified)";
+          const outList = Array.isArray(smart.scopeOut) && smart.scopeOut.length > 0
+            ? smart.scopeOut.join(", ")
+            : "(none)";
+          const sc =
+            typeof smart.successCriterion === "string" && smart.successCriterion.trim().length > 0
+              ? smart.successCriterion.trim()
+              : "(unspecified — request one or propose your own)";
+          return [
+            "This discussion is SMART-scoped:",
+            `- DEADLINE: ${deadlineText}`,
+            `- SUCCESS CRITERION: ${sc}`,
+            `- IN SCOPE: ${inList}`,
+            `- OUT OF SCOPE: ${outList} (raise as separate tension; do NOT derail this discussion)`,
+            `- EXPECTED OUTPUT: ONE \`${expectedKindLabel}\` artifact by deadline`,
+          ].join("\n");
+        })()
+      : "";
+
+    // Phase 1.15h-i #2 — Grove pre-flight (High Output Management, ch. 5).
+    // Only render when at least one of the four WHO fields is populated; an
+    // entirely-empty Grove block adds noise without information. Names are
+    // joined from the heartbeat's agents-table LEFT JOIN.
+    const groveBlock = smart
+      ? (() => {
+          const ownerName =
+            typeof smart.decisionOwnerName === "string" && smart.decisionOwnerName.trim().length > 0
+              ? smart.decisionOwnerName.trim()
+              : (typeof smart.decisionOwnerAgentId === "string" && smart.decisionOwnerAgentId.length > 0
+                  ? smart.decisionOwnerAgentId
+                  : "");
+          const ratifierName =
+            typeof smart.ratifierName === "string" && smart.ratifierName.trim().length > 0
+              ? smart.ratifierName.trim()
+              : (typeof smart.ratifierAgentId === "string" && smart.ratifierAgentId.length > 0
+                  ? smart.ratifierAgentId
+                  : "");
+          const consultedList =
+            Array.isArray(smart.consultedNames) && smart.consultedNames.length > 0
+              ? smart.consultedNames.join(", ")
+              : (Array.isArray(smart.consultedAgentIds) && smart.consultedAgentIds.length > 0
+                  ? smart.consultedAgentIds.join(", ")
+                  : "");
+          const informedList =
+            Array.isArray(smart.informedNames) && smart.informedNames.length > 0
+              ? smart.informedNames.join(", ")
+              : (Array.isArray(smart.informedAgentIds) && smart.informedAgentIds.length > 0
+                  ? smart.informedAgentIds.join(", ")
+                  : "");
+          const anyPopulated = Boolean(ownerName || ratifierName || consultedList || informedList);
+          if (!anyPopulated) return "";
+          return [
+            "Grove pre-flight (this discussion):",
+            `- Decision owner: ${ownerName || "unset"}`,
+            `- Ratifier: ${ratifierName || "Lead Link"}`,
+            `- Consulted: ${consultedList || "none"}`,
+            `- Informed: ${informedList || "none"}`,
+          ].join("\n");
+        })()
+      : "";
+
+    // Per-role variant of the "your job RIGHT NOW" block.
+    const genericJobBlock = [
+      "Your job RIGHT NOW:",
+      "1. Voice YOUR view on the topic in 1-2 concrete paragraphs. Don't hedge. Don't only acknowledge context.",
+      "2. Ground your view in your role's purpose + accountabilities (see \"Your role\" below).",
+      "3. Build on, agree with, or counter what peers have already said (see \"Recent perceptions\" and \"Active discussions\").",
+      "4. If the topic is outside your role's domain: instead of guessing, raise a tension with `holacracy-raise-tension-on-bus` OR forward it via `holacracy-forward-tension` OR ask the right role via `holacracy-talk-to-agent`. Do not respond with \"Standing by\" or \"No directives\".",
+      "5. If you genuinely don't understand the topic: use `holacracy-ask-clarifying-question` (sidecar — does NOT count as your turn).",
+      "",
+      "Output format: 1-2 paragraphs of substantive reasoning, ending with a single concrete recommendation or open question.",
+    ].join("\n");
+
+    // Phase 1.15h-i — Per-role blocks corrected against deeper books-kb
+    // review (Robertson + Getting Teams Done):
+    //   Lead Link: PARTICIPANT — voice view, propose role creation if a role
+    //     gap is causing the tension, otherwise no special duty in IDM. Cell-
+    //     membrane = role assignment / resources / priorities / metrics. NOT
+    //     synthesis, NOT meta-process.
+    //   Facilitator: PROCESS REFEREE ("scheidsrechter"). Confirm phase,
+    //     summarise divergence, ask proposer to amend. No opinion on content.
+    //   Secretary: SCRIBE. Capture verbatim, recite on demand. Never
+    //     synthesises and never authors a proposal. On the summariser turn,
+    //     emit a JSON capture of the round (not new content).
+    //   Proposer (whoever raised the motivating tension): owns the proposal —
+    //     workable version, defends rationale, re-drafts on valid objections.
+    //     We can't dispatch this from the discussion preamble yet because the
+    //     proposer is not tracked as a `discussionRole`; flagged for follow-
+    //     up (Phase 1.15h-i bridge to idm_approvals).
+    const leadLinkBlock = [
+      "You are the Lead Link of this circle — your job is role allocation, resource allocation, priority-setting, and defining metrics. In IDM you are a PARTICIPANT, not a synthesiser, not a decider for the group.",
+      "Your turn now: voice your view in 1-2 concrete paragraphs grounded in your accountabilities. Same expectations as any other peer.",
+      "If the tension exposes a role GAP (no agent in this circle has the accountability for it), call `holacracy-onboard-agent` to propose creating that role. If the topic clearly belongs to a parent circle, call `holacracy-forward-tension`. Otherwise simply contribute your view.",
+      "Output: 1-2 paragraphs of substantive reasoning. Do NOT synthesise others' views — that's not your job in IDM.",
+    ].join("\n");
+
+    const facilitatorBlock = [
+      "You are the Facilitator (Robertson: 'scheidsrechter' / process referee). Your job in this round is PROCESS, not content.",
+      "1. Confirm the discussion is in the right phase (reactions vs. amendment vs. objections). Name the phase explicitly.",
+      "2. If reactions are still divergent, summarise the divergence in one paragraph and ask the proposer (whoever raised the motivating tension) to amend their proposal.",
+      "3. If you spot an invalid objection (not based on harm to the circle / not following from the proposal / not based on current knowledge), name it and call for the proposer to continue.",
+      "Do NOT add your own opinion on the topic. Your authority is over the process only.",
+      "Output: 1 paragraph naming the current phase + what should happen next.",
+    ].join("\n");
+
+    const secretaryScribeBlock = [
+      "You are the Secretary — the SCRIBE. Your job is CAPTURE only: record the current state of the proposal verbatim, never synthesise, never author.",
+      "Your turn now: produce a 2-3 sentence factual recap of what each prior speaker said. No opinion, no new content.",
+      "Output: bullet list, one bullet per peer, in the form `- {agentName}: {brief factual paraphrase of their stated view}`. End with `current_proposal: \"<text the proposer last stated, or 'none yet'>\"`.",
+    ].join("\n");
+
+    const secretarySummaryBlock = [
+      "You are the Secretary on the summariser turn — still a SCRIBE, not a synthesiser. Capture the conversation as a structured record. The proposer (tension-raiser) owns any new proposal content; you only record what was said.",
+      `Output strict JSON: { "current_proposal": "<verbatim from proposer's last turn, or 'none — circle has not converged'>", "kind": "${expectedKindLabel}", "phase_recap": [ { "agent": "<name>", "view": "<one-sentence paraphrase>" } ], "open_objections": [ ... ], "next_action": "<who should re-draft, per Lead Link's routing>" }.`,
+      "If no proposer turn was produced, set current_proposal to 'none — circle has not converged' and next_action to 'Lead Link to forward this tension to parent circle'. Do NOT invent a proposal text yourself.",
+    ].join("\n");
+
+    // Phase 1.15h-h4 — non-current-speaker suppression. If the heartbeat
+    // determined this agent is NOT the active speaker of the current round
+    // (woken via a perception, not a turn-spawn), override every other role
+    // variant with an OBSERVE-ONLY block so they don't add a spurious turn.
+    const isCurrentSpeaker =
+      isDiscussionTurn && runtimeConfigForHermes.isCurrentSpeaker === true;
+    const observerBlock = [
+      "You are OBSERVING this discussion round — this run is NOT your turn.",
+      "Do NOT add a turn. Update your mental model from the existing turns + perceptions.",
+      "If you spot something the current speaker is missing, use `holacracy-ask-clarifying-question` OR `POST /api/holacracy/talk-to-agent` to send a sidecar note — neither counts as a turn.",
+      "Output: one line stating 'OBSERVING — not my turn' followed by at most one optional clarifying question.",
+    ].join("\n");
+
+    let roleJobBlock = genericJobBlock;
+    if (isDiscussionTurn) {
+      if (!isCurrentSpeaker && !isSummaryTurn) {
+        roleJobBlock = observerBlock;
+      } else if (discussionRole === "secretary" && isSummaryTurn) {
+        roleJobBlock = secretarySummaryBlock;
+      } else if (discussionRole === "secretary") {
+        roleJobBlock = secretaryScribeBlock;
+      } else if (discussionRole === "facilitator") {
+        roleJobBlock = facilitatorBlock;
+      } else if (discussionRole === "lead_link") {
+        roleJobBlock = leadLinkBlock;
+      }
+    }
+
+    const httpBridgeLedger = [
+      "You can ESCALATE via HTTP. Paperclip API base is $PAPERCLIP_API_BASE (env var). Endpoints:",
+      "- POST {base}/api/holacracy/tensions  body { circleId, title, body, severity } — raise a tension",
+      "- POST {base}/api/holacracy/forward-tension  body { tensionId, context } — escalate to parent circle",
+      "- POST {base}/api/holacracy/talk-to-agent  body { toAgentId, text, contextId? } — DM a peer",
+      "- POST {base}/api/holacracy/ask-skill  body { skill, text } — broadcast to skill pool",
+      "- POST {base}/api/holacracy/broadcast  body { circleId, kind, body } — circle-wide announce",
+      "Authorize with `Authorization: Bearer $PAPERCLIP_API_KEY` (set in env).",
+      "",
+      "If you say \"I will forward this\" or \"I will raise a tension,\" you MUST call the relevant endpoint in this run. Prose-only handovers do NOT count.",
+    ].join("\n");
+
+    const discussionPreamble = isDiscussionTurn
+      ? [
+          "You are in a Holacracy team discussion (reactions round). This run is your turn.",
+          "",
+          roleJobBlock,
+          ...(smartBlock ? ["", smartBlock] : []),
+          ...(groveBlock ? ["", groveBlock] : []),
+          "",
+          httpBridgeLedger,
+        ].join("\n")
+      : "";
+
+    // Phase 1.15h-j2 — inject PAPERCLIP_API_BASE so hermes can actually call
+    // the HTTP-bridge endpoints documented in the preamble. Without this var,
+    // hermes attempts curl with an empty base and gets connection-refused
+    // (curl error 7). Falls back to local default if no public URL is set.
+    const paperclipApiBase =
+      (typeof process.env.PAPERCLIP_PUBLIC_URL === "string" && process.env.PAPERCLIP_PUBLIC_URL.trim().length > 0
+        ? process.env.PAPERCLIP_PUBLIC_URL.replace(/\/+$/, "")
+        : null)
+      ?? `http://127.0.0.1:${process.env.PORT || "3100"}`;
+
     const patchedConfig: Record<string, unknown> = {
       ...existingConfig,
       env: {
         ...existingEnv,
         ...(!explicitApiKey ? { PAPERCLIP_API_KEY: normalizedCtx.authToken } : {}),
         PAPERCLIP_RUN_ID: normalizedCtx.runId,
+        PAPERCLIP_API_BASE: paperclipApiBase,
       },
     };
 
@@ -387,8 +632,9 @@ const hermesLocalAdapter: ServerAdapterModule = {
     // have NO snapshot AND NO existing template, leave promptTemplate unset
     // so hermes's default behaviour is preserved end-to-end.
     const prefixParts: string[] = [];
+    if (discussionPreamble) prefixParts.push(discussionPreamble);
     if (dnaMarkdown) prefixParts.push(dnaMarkdown);
-    if (promptTemplate || dnaMarkdown) prefixParts.push(authGuardPrompt);
+    if (promptTemplate || dnaMarkdown || discussionPreamble) prefixParts.push(authGuardPrompt);
     const prefix = prefixParts.join("\n\n---\n\n");
     if (prefix && promptTemplate) {
       patchedConfig.promptTemplate = `${prefix}\n\n${promptTemplate}`;

@@ -1,0 +1,251 @@
+{
+  "version": "1.0",
+  "description": "Reusable agent-to-agent handoff templates for Holacracy AI company",
+  "templates": [
+    {
+      "id": "feature-request-pipeline",
+      "name": "Feature Request Pipeline",
+      "description": "Routes feature requests from validation through implementation to documentation.",
+      "trigger": "label:feature-request OR title:feature:",
+      "circle": "General Company Circle",
+      "steps": [
+        {
+          "step_number": 1,
+          "role_name": "PM Coordinator",
+          "title": "Validate and scope feature",
+          "inputs": ["raw feature request (title + description)"],
+          "outputs": ["validated requirement doc", "priority assessment", "assigned circle/role"],
+          "sla_days": 1,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 2,
+          "role_name": "Dev Lead",
+          "title": "Technical design",
+          "inputs": ["validated requirement from step 1"],
+          "outputs": ["technical design doc", "effort estimate in days"],
+          "sla_days": 2,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 3,
+          "role_name": "Dev Lead",
+          "title": "Implementation",
+          "inputs": ["technical design from step 2"],
+          "outputs": ["working code", "PR or diff reference"],
+          "sla_days": 5,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 4,
+          "role_name": "QA Lead",
+          "title": "Test and verify",
+          "inputs": ["PR/diff from step 3", "success criteria from step 1"],
+          "outputs": ["test results", "sign-off or blocker list"],
+          "sla_days": 2,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 5,
+          "role_name": "Doc Lead",
+          "title": "Document",
+          "inputs": ["completed feature", "requirement doc from step 1"],
+          "outputs": ["updated docs (API, runbook, or changelog)"],
+          "sla_days": 1,
+          "blocks_next_step": false
+        }
+      ],
+      "handoff_rules": [
+        {"from_role": "PM Coordinator", "to_role": "Dev Lead", "condition": "scope validated", "method": "sub-issue"},
+        {"from_role": "Dev Lead", "to_role": "QA Lead", "condition": "implementation complete", "method": "sub-issue"},
+        {"from_role": "QA Lead", "to_role": "Doc Lead", "condition": "tests pass", "method": "sub-issue"},
+        {"from_role": "QA Lead", "to_role": "Dev Lead", "condition": "blockers found", "method": "comment+reopen"}
+      ]
+    },
+    {
+      "id": "research-request-pipeline",
+      "name": "Research Request Pipeline",
+      "description": "Routes research questions from intake through synthesis to strategic recommendation.",
+      "trigger": "label:research OR title:research: OR title:investigate:",
+      "circle": "R&D Circle",
+      "steps": [
+        {
+          "step_number": 1,
+          "role_name": "PM Coordinator",
+          "title": "Clarify research question",
+          "inputs": ["raw request"],
+          "outputs": ["scoped question", "success criteria", "deadline"],
+          "sla_days": 1,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 2,
+          "role_name": "Researcher",
+          "title": "Execute research",
+          "inputs": ["scoped question from step 1"],
+          "outputs": ["research findings doc", "key insights (max 5 bullets)"],
+          "sla_days": 3,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 3,
+          "role_name": "Strategist",
+          "title": "Strategic synthesis",
+          "inputs": ["research findings from step 2", "company goals context"],
+          "outputs": ["strategic recommendation", "action items if any"],
+          "sla_days": 1,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 4,
+          "role_name": "PM Coordinator",
+          "title": "Route to action",
+          "inputs": ["strategic recommendation from step 3"],
+          "outputs": ["new issue created if action needed"],
+          "sla_days": 1,
+          "blocks_next_step": false
+        }
+      ],
+      "handoff_rules": [
+        {"from_role": "PM Coordinator", "to_role": "Researcher", "condition": "question scoped", "method": "sub-issue"},
+        {"from_role": "Researcher", "to_role": "Strategist", "condition": "findings complete", "method": "sub-issue"},
+        {"from_role": "Strategist", "to_role": "PM Coordinator", "condition": "recommendation written", "method": "comment"}
+      ]
+    },
+    {
+      "id": "board-feedback-pipeline",
+      "name": "Board Feedback Pipeline",
+      "description": "Routes board/customer input through triage to correct circle for execution.",
+      "trigger": "origin:board AND no-assignee OR label:feedback",
+      "circle": "General Company Circle",
+      "steps": [
+        {
+          "step_number": 1,
+          "role_name": "PM Coordinator",
+          "title": "Triage and classify",
+          "inputs": ["raw board input"],
+          "outputs": ["classification", "target circle + role", "priority"],
+          "sla_days": 0,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 2,
+          "role_name": "target circle Lead Link",
+          "title": "Decompose within circle",
+          "inputs": ["classified issue from step 1"],
+          "outputs": ["sub-issues assigned to roles OR direct execution"],
+          "sla_days": 1,
+          "blocks_next_step": false
+        }
+      ],
+      "handoff_rules": [
+        {"from_role": "PM Coordinator", "to_role": "target circle Lead Link", "condition": "classification complete", "method": "assign+set-project"},
+        {"from_role": "PM Coordinator", "to_role": "Workflow Architect", "condition": "routing gap", "method": "governance-tension"}
+      ]
+    },
+    {
+      "id": "governance-tension-pipeline",
+      "name": "Governance Tension Pipeline",
+      "description": "Processes governance tensions through Holacracy channels from identification to resolution.",
+      "trigger": "tension:governance OR title:governance tension",
+      "circle": "General Company Circle",
+      "steps": [
+        {
+          "step_number": 1,
+          "role_name": "Workflow Architect",
+          "title": "Assess and document tension",
+          "inputs": ["raw tension description"],
+          "outputs": ["structured tension (current/ideal/proposal)", "affected roles", "urgency"],
+          "sla_days": 1,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 2,
+          "role_name": "Facilitator",
+          "title": "Facilitate governance meeting",
+          "inputs": ["documented tension from step 1"],
+          "outputs": ["meeting outcome (pass/objection/amended/defer)"],
+          "sla_days": 3,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 3,
+          "role_name": "Secretary",
+          "title": "Record governance change",
+          "inputs": ["meeting outcome from step 2"],
+          "outputs": ["updated governance record", "notifications sent"],
+          "sla_days": 1,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 4,
+          "role_name": "Workflow Architect",
+          "title": "Update operational playbooks",
+          "inputs": ["governance change from step 3"],
+          "outputs": ["updated workflow docs if affected", "closed tension"],
+          "sla_days": 1,
+          "blocks_next_step": false
+        }
+      ],
+      "handoff_rules": [
+        {"from_role": "Workflow Architect", "to_role": "Facilitator", "condition": "tension structured", "method": "sub-issue"},
+        {"from_role": "Facilitator", "to_role": "Secretary", "condition": "decision reached", "method": "sub-issue"},
+        {"from_role": "Secretary", "to_role": "Workflow Architect", "condition": "governance recorded", "method": "sub-issue"}
+      ]
+    },
+    {
+      "id": "ld-intelligence-distribution",
+      "name": "L&D Intelligence Distribution",
+      "description": "Weekly pipeline: scan, curate, and distribute AI/org intelligence to all circles.",
+      "trigger": "label:intelligence-distribution OR schedule:weekly",
+      "circle": "R&D Circle",
+      "steps": [
+        {
+          "step_number": 1,
+          "role_name": "Researcher",
+          "title": "Scan and identify relevant intelligence",
+          "inputs": ["configured sources", "circle focus areas"],
+          "outputs": ["shortlist of 5-10 items (title, source, relevance)"],
+          "sla_days": 1,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 2,
+          "role_name": "Researcher",
+          "title": "Curate and synthesize",
+          "inputs": ["shortlist from step 1"],
+          "outputs": ["curated brief (2-3 sentences per item)", "items ingested to KB"],
+          "sla_days": 1,
+          "blocks_next_step": true
+        },
+        {
+          "step_number": 3,
+          "role_name": "PM Coordinator",
+          "title": "Distribute to circles",
+          "inputs": ["curated brief from step 2"],
+          "outputs": ["circle-specific issues created", "weekly summary comment"],
+          "sla_days": 1,
+          "blocks_next_step": false
+        }
+      ],
+      "handoff_rules": [
+        {"from_role": "Researcher", "to_role": "PM Coordinator", "condition": "brief complete", "method": "sub-issue"}
+      ]
+    }
+  ],
+  "routing_guide": {
+    "description": "PM Coordinator signal-to-template mapping",
+    "rules": [
+      {"signal": "label:feature-request", "template": "feature-request-pipeline", "first_agent": "PM Coordinator"},
+      {"signal": "label:research", "template": "research-request-pipeline", "first_agent": "PM Coordinator"},
+      {"signal": "origin:board AND no-assignee", "template": "board-feedback-pipeline", "first_agent": "PM Coordinator"},
+      {"signal": "tension:governance", "template": "governance-tension-pipeline", "first_agent": "Workflow Architect"},
+      {"signal": "label:intelligence", "template": "ld-intelligence-distribution", "first_agent": "Researcher"},
+      {"signal": "no-match", "action": "raise governance tension: routing gap", "agent": "Workflow Architect"}
+    ]
+  },
+  "sub_issue_pattern": {
+    "title": "[{PARENT_ID}] {role_name} - {step.title}",
+    "description": "Part of workflow: {workflow.name}\n\n**Inputs required:**\n{step.inputs}\n\n**Outputs expected:**\n{step.outputs}\n\nSLA: {step.sla_days} day(s)"
+  }
+}

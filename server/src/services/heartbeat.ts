@@ -5745,7 +5745,12 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       if (issueIdForTask) {
         try {
           const [taskIssue] = await db
-            .select({ title: issues.title, description: issues.description })
+            .select({
+              title: issues.title,
+              description: issues.description,
+              originKind: issues.originKind,
+              originId: issues.originId,
+            })
             .from(issues)
             .where(and(eq(issues.id, issueIdForTask), eq(issues.companyId, agent.companyId)))
             .limit(1);
@@ -5753,6 +5758,196 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             runtimeConfig.taskId = issueIdForTask;
             runtimeConfig.taskTitle = taskIssue.title ?? "";
             runtimeConfig.taskBody = taskIssue.description ?? "";
+            // Phase 1.15h-g2 — flag discussion turns so the hermes wrapper can
+            // prepend the conversational reactions-round preamble (see
+            // hermesLocalAdapter in server/src/adapters/registry.ts).
+            const isDiscussionTurn = taskIssue.originKind === "discussion:turn";
+            const isDiscussionSummary = taskIssue.originKind === "discussion:summary";
+            if (isDiscussionTurn || isDiscussionSummary) {
+              runtimeConfig.discussionMode = true;
+              runtimeConfig.discussionTurnKind = taskIssue.originKind ?? null;
+
+              // Phase 1.15h-h2 — surface SMART scoping + role to the preamble.
+              // origin_id is the circle_discussions.id; do a single SELECT for
+              // the SMART fields and circle_id, then resolve the agent's role
+              // type within that circle. Skip silently on any miss.
+              const discussionId = readNonEmptyString(taskIssue.originId);
+              if (discussionId) {
+                try {
+                  const smartRows = await db.execute<{
+                    success_criterion: string | null;
+                    scope_in: unknown;
+                    scope_out: unknown;
+                    decision_deadline: string | null;
+                    motivating_tension_id: string | null;
+                    expected_output_kind: string | null;
+                    circle_id: string | null;
+                    speaker_order: unknown;
+                    current_speaker_idx: number | null;
+                    // Phase 1.15h-i #2 — Grove pre-flight (HOM ch. 5).
+                    decision_owner_agent_id: string | null;
+                    consulted_agent_ids: unknown;
+                    ratifier_agent_id: string | null;
+                    informed_agent_ids: unknown;
+                    decision_owner_name: string | null;
+                    ratifier_name: string | null;
+                    consulted_names: unknown;
+                    informed_names: unknown;
+                  }>(sql`
+                    SELECT d.success_criterion,
+                           d.scope_in,
+                           d.scope_out,
+                           d.decision_deadline::text AS decision_deadline,
+                           d.motivating_tension_id::text AS motivating_tension_id,
+                           d.expected_output_kind,
+                           d.circle_id::text AS circle_id,
+                           d.speaker_order,
+                           d.current_speaker_idx,
+                           d.decision_owner_agent_id::text AS decision_owner_agent_id,
+                           d.consulted_agent_ids,
+                           d.ratifier_agent_id::text AS ratifier_agent_id,
+                           d.informed_agent_ids,
+                           own_a.name AS decision_owner_name,
+                           rat_a.name AS ratifier_name,
+                           (
+                             SELECT array_agg(a.name ORDER BY a.name)
+                               FROM public.agents a
+                              WHERE a.id = ANY(COALESCE(d.consulted_agent_ids, '{}'::uuid[]))
+                           ) AS consulted_names,
+                           (
+                             SELECT array_agg(a.name ORDER BY a.name)
+                               FROM public.agents a
+                              WHERE a.id = ANY(COALESCE(d.informed_agent_ids, '{}'::uuid[]))
+                           ) AS informed_names
+                      FROM public.circle_discussions d
+                      LEFT JOIN public.agents own_a ON own_a.id = d.decision_owner_agent_id
+                      LEFT JOIN public.agents rat_a ON rat_a.id = d.ratifier_agent_id
+                      WHERE d.id = ${discussionId}::uuid
+                      LIMIT 1
+                  `);
+                  const smartList = Array.isArray(smartRows)
+                    ? smartRows
+                    : (smartRows as unknown as { rows?: typeof smartRows }).rows ?? [];
+                  const smart = (smartList as Array<{
+                    success_criterion: string | null;
+                    scope_in: unknown;
+                    scope_out: unknown;
+                    decision_deadline: string | null;
+                    motivating_tension_id: string | null;
+                    expected_output_kind: string | null;
+                    circle_id: string | null;
+                    speaker_order: unknown;
+                    current_speaker_idx: number | null;
+                    decision_owner_agent_id: string | null;
+                    consulted_agent_ids: unknown;
+                    ratifier_agent_id: string | null;
+                    informed_agent_ids: unknown;
+                    decision_owner_name: string | null;
+                    ratifier_name: string | null;
+                    consulted_names: unknown;
+                    informed_names: unknown;
+                  }>)[0];
+                  if (smart) {
+                    const toStringArray = (v: unknown): string[] => {
+                      if (Array.isArray(v)) {
+                        return v.map((x) => String(x)).filter((s) => s.length > 0);
+                      }
+                      if (typeof v === "string") {
+                        try {
+                          const parsed = JSON.parse(v);
+                          if (Array.isArray(parsed)) {
+                            return parsed.map((x) => String(x)).filter((s) => s.length > 0);
+                          }
+                        } catch {
+                          // fall through
+                        }
+                      }
+                      return [];
+                    };
+                    const hoursRemaining = smart.decision_deadline
+                      ? Math.max(
+                          0,
+                          (new Date(smart.decision_deadline).getTime() - Date.now()) / 3_600_000,
+                        )
+                      : null;
+                    runtimeConfig.discussionSmart = {
+                      successCriterion: smart.success_criterion,
+                      scopeIn: toStringArray(smart.scope_in),
+                      scopeOut: toStringArray(smart.scope_out),
+                      decisionDeadline: smart.decision_deadline,
+                      expectedOutputKind: smart.expected_output_kind,
+                      motivatingTensionId: smart.motivating_tension_id,
+                      hoursRemaining,
+                      // Phase 1.15h-i #2 — Grove pre-flight (HOM ch. 5):
+                      // surface decision owner / ratifier / consulted /
+                      // informed so the discussion-mode preamble can render
+                      // the Grove block.
+                      decisionOwnerAgentId: smart.decision_owner_agent_id,
+                      decisionOwnerName: smart.decision_owner_name,
+                      ratifierAgentId: smart.ratifier_agent_id,
+                      ratifierName: smart.ratifier_name,
+                      consultedAgentIds: toStringArray(smart.consulted_agent_ids),
+                      consultedNames: toStringArray(smart.consulted_names),
+                      informedAgentIds: toStringArray(smart.informed_agent_ids),
+                      informedNames: toStringArray(smart.informed_names),
+                    };
+
+                    // Phase 1.15h-h4 — flag whether THIS agent is the current
+                    // speaker, so the preamble can switch from "voice your view"
+                    // to "OBSERVING — not your turn" when they got woken via a
+                    // perception that wasn't their turn-spawn.
+                    const speakerOrder = toStringArray(smart.speaker_order);
+                    const idx = typeof smart.current_speaker_idx === "number"
+                      ? smart.current_speaker_idx
+                      : 0;
+                    const currentSpeakerId = speakerOrder[idx];
+                    runtimeConfig.isCurrentSpeaker =
+                      typeof currentSpeakerId === "string" && currentSpeakerId === agent.id;
+
+                    // Resolve this agent's role_type within the discussion's
+                    // circle. Lives in plugin-holacracy's namespace — mirror
+                    // the hardcoded schema name used elsewhere in the server
+                    // (see server/src/mqtt/subscription-compute.ts etc.).
+                    if (smart.circle_id) {
+                      try {
+                        const roleRows = await db.execute<{ role_type: string | null }>(sql`
+                          SELECT r.role_type
+                            FROM plugin_holacracy_c5049b5dfe.role_assignments ra
+                            JOIN plugin_holacracy_c5049b5dfe.roles r ON r.id = ra.role_id
+                            WHERE ra.agent_id = ${agent.id}::uuid
+                              AND r.circle_id = ${smart.circle_id}::uuid
+                            ORDER BY CASE r.role_type
+                              WHEN 'lead_link' THEN 0
+                              WHEN 'secretary' THEN 1
+                              WHEN 'facilitator' THEN 2
+                              WHEN 'circle_rep' THEN 3
+                              ELSE 4
+                            END
+                            LIMIT 1
+                        `);
+                        const roleList = Array.isArray(roleRows)
+                          ? roleRows
+                          : (roleRows as unknown as { rows?: typeof roleRows }).rows ?? [];
+                        const roleType = (roleList as Array<{ role_type: string | null }>)[0]?.role_type;
+                        if (roleType && roleType.trim().length > 0) {
+                          runtimeConfig.discussionRole = roleType;
+                        }
+                      } catch (roleErr) {
+                        logger.debug(
+                          { err: roleErr, agentId: agent.id, runId: run.id, discussionId },
+                          "heartbeat: discussion role lookup failed; using generic preamble",
+                        );
+                      }
+                    }
+                  }
+                } catch (smartErr) {
+                  logger.debug(
+                    { err: smartErr, agentId: agent.id, runId: run.id, discussionId },
+                    "heartbeat: SMART context lookup failed; using generic preamble",
+                  );
+                }
+              }
+            }
           }
         } catch (err) {
           logger.warn(
@@ -8145,6 +8340,33 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             `);
             continue;
           }
+          // Phase 1.15h-j1 — resolve this agent's open turn issue for the
+          // discussion's contextId so the hermes-task-injection branch in the
+          // adapter run will fire (it gates on `context.issueId`). Without
+          // this, current speakers wake on perception but never see their
+          // assigned task, fall back to noTask, and produce "standby" output.
+          let resolvedIssueId: string | undefined;
+          try {
+            // Topic format: paperclip/v1/discussion/{companyId}/{contextId}
+            const segs = row.topic.split("/");
+            const contextId = segs.length === 5 ? segs[4] : undefined;
+            if (contextId) {
+              const issueRows = (await db.execute<{ id: string }>(sql`
+                SELECT id::text AS id
+                  FROM public.issues
+                 WHERE assignee_agent_id = ${row.agentId}::uuid
+                   AND a2a_context_id = ${contextId}
+                   AND origin_kind IN ('discussion:turn', 'discussion:summary')
+                   AND status IN ('backlog', 'todo', 'in_progress')
+                 ORDER BY created_at DESC
+                 LIMIT 1
+              `)) as unknown as { rows: Array<{ id: string }> } | Array<{ id: string }>;
+              const issueList = Array.isArray(issueRows) ? issueRows : issueRows.rows ?? [];
+              resolvedIssueId = issueList[0]?.id;
+            }
+          } catch {
+            // best-effort; if lookup fails the wake still fires without issueId
+          }
           try {
             const run = await enqueueWakeup(row.agentId, {
               source: "timer",
@@ -8157,6 +8379,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                 reason: "discussion_turn_received",
                 topic: row.topic,
                 now: now.toISOString(),
+                ...(resolvedIssueId ? { issueId: resolvedIssueId } : {}),
               },
             });
             if (run) {

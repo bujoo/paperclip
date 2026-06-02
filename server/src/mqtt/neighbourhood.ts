@@ -32,6 +32,14 @@ const MAX_PERCEPTIONS = 20;
 const MAX_RECENT_PULSES = 20;
 const MAX_ACTIVE_DISCUSSIONS = 10;
 const MAX_TRUST_SIGNALS = 10;
+const MAX_MY_ROLES = 5;
+const MAX_STRATEGIES_PER_CIRCLE = 3;
+const MAX_ACCOUNTABILITIES_SHOWN = 5;
+const MAX_DOMAINS_SHOWN = 3;
+const METRIC_LOOKBACK_DAYS = 14;
+const CHECKLIST_LOOKBACK_DAYS = 14;
+const MAX_METRICS = 10;
+const MAX_CHECKLISTS = 10;
 
 export interface NeighbourEntry {
   id: string;
@@ -81,6 +89,49 @@ export interface TrustSignalEntry {
   failedExchanges: number;
 }
 
+export interface MyRoleEntry {
+  roleId: string;
+  roleName: string;
+  roleType: string;
+  purpose: string | null;
+  accountabilities: string[];
+  domains: string[];
+  circleId: string;
+  circleName: string | null;
+}
+
+export interface StrategyEntry {
+  id: string;
+  circleId: string;
+  circleName: string | null;
+  text: string;
+  setBy: string | null;
+  setByName: string | null;
+  createdAt: string;
+}
+
+export interface MetricEntry {
+  metricId: string;
+  metricName: string;
+  unit: string | null;
+  circleId: string;
+  circleName: string | null;
+  latestValue: number | null;
+  latestPeriod: string | null;
+  priorValue: number | null;
+  trend: "up" | "down" | "flat" | "unknown";
+}
+
+export interface ChecklistEntry {
+  checklistId: string;
+  itemText: string;
+  circleId: string;
+  circleName: string | null;
+  checkedCount: number;
+  totalCount: number;
+  latestPeriod: string | null;
+}
+
 export interface NeighbourhoodSnapshot {
   agentId: string;
   companyId: string;
@@ -91,6 +142,10 @@ export interface NeighbourhoodSnapshot {
   unconsumedPerceptions: PerceptionEntry[];
   activeDiscussions: ActiveDiscussionEntry[];
   trustSignals: TrustSignalEntry[];
+  myRoles: MyRoleEntry[];
+  strategies: StrategyEntry[];
+  metrics: MetricEntry[];
+  checklists: ChecklistEntry[];
   /** Stable hash of the rendered content; the adapter cache keys off this so
    *  a fresh perception or DNA mutation invalidates the cached prompt. */
   contentHash: string;
@@ -362,6 +417,294 @@ async function loadTrustSignals(db: Db, agentId: string): Promise<TrustSignalEnt
   }
 }
 
+async function loadMyRoles(db: Db, agentId: string): Promise<MyRoleEntry[]> {
+  // The agent's OWN role assignments — every role this agent holds, with the
+  // full purpose + accountabilities + domains so the LLM can reason from its
+  // own role (not just peers'). Mirrors loadNeighbours() join shape but
+  // filters to the calling agent.
+  try {
+    interface Row extends Record<string, unknown> {
+      roleId: string;
+      roleName: string;
+      roleType: string;
+      purpose: string | null;
+      accountabilities: Array<Record<string, unknown> | string> | null;
+      domains: Array<Record<string, unknown> | string> | null;
+      circleId: string;
+      circleName: string | null;
+    }
+    const rows = await db.execute<Row>(sql`
+      SELECT
+        r.id::text                                                     AS "roleId",
+        r.name                                                         AS "roleName",
+        r.role_type                                                    AS "roleType",
+        r.purpose                                                      AS "purpose",
+        COALESCE(r.accountabilities, '[]'::jsonb)                      AS "accountabilities",
+        COALESCE(r.domains, '[]'::jsonb)                               AS "domains",
+        c.id::text                                                     AS "circleId",
+        c.name                                                         AS "circleName"
+      FROM plugin_holacracy_c5049b5dfe.role_assignments ra
+      JOIN plugin_holacracy_c5049b5dfe.roles r ON r.id = ra.role_id
+      JOIN plugin_holacracy_c5049b5dfe.circles c ON c.id = r.circle_id
+      WHERE ra.agent_id = ${agentId}::uuid
+      ORDER BY ra.assigned_at DESC
+      LIMIT ${MAX_MY_ROLES}
+    `);
+    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    return list.map((r): MyRoleEntry => ({
+      roleId: r.roleId,
+      roleName: r.roleName,
+      roleType: r.roleType,
+      purpose: r.purpose,
+      accountabilities: normalizeStringList(r.accountabilities),
+      domains: normalizeStringList(r.domains),
+      circleId: r.circleId,
+      circleName: r.circleName,
+    }));
+  } catch (err) {
+    logger.debug({ err, agentId }, "neighbourhood: my-roles lookup failed");
+    return [];
+  }
+}
+
+async function loadCircleStrategies(db: Db, agentId: string): Promise<StrategyEntry[]> {
+  // For each circle the agent has a role assignment in, list the top N most
+  // recent active strategies. Joined to agents so we can surface the
+  // human-readable "set by" name instead of a UUID.
+  try {
+    interface Row extends Record<string, unknown> {
+      id: string;
+      circleId: string;
+      circleName: string | null;
+      text: string;
+      setBy: string | null;
+      setByName: string | null;
+      createdAt: string;
+      circleRank: number;
+    }
+    const rows = await db.execute<Row>(sql`
+      WITH my_circles AS (
+        SELECT DISTINCT c.id AS circle_id, c.name AS circle_name
+        FROM plugin_holacracy_c5049b5dfe.role_assignments ra
+        JOIN plugin_holacracy_c5049b5dfe.roles r ON r.id = ra.role_id
+        JOIN plugin_holacracy_c5049b5dfe.circles c ON c.id = r.circle_id
+        WHERE ra.agent_id = ${agentId}::uuid
+      ),
+      ranked AS (
+        SELECT
+          s.id,
+          s.circle_id,
+          s.text,
+          s.set_by,
+          s.created_at,
+          ROW_NUMBER() OVER (PARTITION BY s.circle_id ORDER BY s.created_at DESC) AS rn
+        FROM plugin_holacracy_c5049b5dfe.strategies s
+        JOIN my_circles mc ON mc.circle_id = s.circle_id
+        WHERE s.active = TRUE
+      )
+      SELECT
+        ranked.id::text                AS "id",
+        ranked.circle_id::text         AS "circleId",
+        mc.circle_name                 AS "circleName",
+        ranked.text                    AS "text",
+        ranked.set_by::text            AS "setBy",
+        a.name                         AS "setByName",
+        ranked.created_at::text        AS "createdAt",
+        ranked.rn                      AS "circleRank"
+      FROM ranked
+      JOIN my_circles mc ON mc.circle_id = ranked.circle_id
+      LEFT JOIN public.agents a ON a.id = ranked.set_by
+      WHERE ranked.rn <= ${MAX_STRATEGIES_PER_CIRCLE}
+      ORDER BY ranked.created_at DESC
+    `);
+    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    return list.map((r): StrategyEntry => ({
+      id: r.id,
+      circleId: r.circleId,
+      circleName: r.circleName,
+      text: r.text,
+      setBy: r.setBy,
+      setByName: r.setByName,
+      createdAt: r.createdAt,
+    }));
+  } catch (err) {
+    logger.debug({ err, agentId }, "neighbourhood: circle-strategies lookup failed");
+    return [];
+  }
+}
+
+async function loadCircleMetrics(db: Db, agentId: string): Promise<MetricEntry[]> {
+  // For each circle the agent is in, surface metrics with the latest value
+  // (most recent period within the lookback window) and the prior value (the
+  // one before that) so the LLM can see a trend. NULL prior_value means
+  // either no history or only one report — surfaced as trend=unknown.
+  try {
+    interface Row extends Record<string, unknown> {
+      metricId: string;
+      metricName: string;
+      unit: string | null;
+      circleId: string;
+      circleName: string | null;
+      latestValue: string | number | null;
+      latestPeriod: string | null;
+      priorValue: string | number | null;
+    }
+    const rows = await db.execute<Row>(sql`
+      WITH my_circles AS (
+        SELECT DISTINCT c.id AS circle_id, c.name AS circle_name
+        FROM plugin_holacracy_c5049b5dfe.role_assignments ra
+        JOIN plugin_holacracy_c5049b5dfe.roles r ON r.id = ra.role_id
+        JOIN plugin_holacracy_c5049b5dfe.circles c ON c.id = r.circle_id
+        WHERE ra.agent_id = ${agentId}::uuid
+      ),
+      recent_values AS (
+        SELECT
+          mv.metric_id,
+          mv.value,
+          mv.period_date,
+          ROW_NUMBER() OVER (PARTITION BY mv.metric_id ORDER BY mv.period_date DESC, mv.created_at DESC) AS rn
+        FROM plugin_holacracy_c5049b5dfe.metric_values mv
+        WHERE mv.created_at >= NOW() - (${METRIC_LOOKBACK_DAYS}::int * INTERVAL '1 day')
+      )
+      SELECT
+        m.id::text                                          AS "metricId",
+        m.name                                              AS "metricName",
+        m.unit                                              AS "unit",
+        m.circle_id::text                                   AS "circleId",
+        mc.circle_name                                      AS "circleName",
+        latest.value                                        AS "latestValue",
+        latest.period_date::text                            AS "latestPeriod",
+        prior.value                                         AS "priorValue"
+      FROM plugin_holacracy_c5049b5dfe.metrics m
+      JOIN my_circles mc ON mc.circle_id = m.circle_id
+      LEFT JOIN recent_values latest ON latest.metric_id = m.id AND latest.rn = 1
+      LEFT JOIN recent_values prior ON prior.metric_id = m.id AND prior.rn = 2
+      WHERE latest.value IS NOT NULL
+      ORDER BY latest.period_date DESC NULLS LAST
+      LIMIT ${MAX_METRICS}
+    `);
+    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    return list.map((r): MetricEntry => {
+      const latestNum = toNumOrNull(r.latestValue);
+      const priorNum = toNumOrNull(r.priorValue);
+      let trend: MetricEntry["trend"] = "unknown";
+      if (latestNum !== null && priorNum !== null) {
+        if (latestNum > priorNum) trend = "up";
+        else if (latestNum < priorNum) trend = "down";
+        else trend = "flat";
+      }
+      return {
+        metricId: r.metricId,
+        metricName: r.metricName,
+        unit: r.unit,
+        circleId: r.circleId,
+        circleName: r.circleName,
+        latestValue: latestNum,
+        latestPeriod: r.latestPeriod,
+        priorValue: priorNum,
+        trend,
+      };
+    });
+  } catch (err) {
+    logger.debug({ err, agentId }, "neighbourhood: circle-metrics lookup failed");
+    return [];
+  }
+}
+
+async function loadCircleChecklists(db: Db, agentId: string): Promise<ChecklistEntry[]> {
+  // For each circle the agent is in, surface checklist outcomes from the most
+  // recent period within the lookback window: how many responses came back
+  // CHECKED vs total responses for that period.
+  try {
+    interface Row extends Record<string, unknown> {
+      checklistId: string;
+      itemText: string;
+      circleId: string;
+      circleName: string | null;
+      checkedCount: string | number;
+      totalCount: string | number;
+      latestPeriod: string | null;
+    }
+    const rows = await db.execute<Row>(sql`
+      WITH my_circles AS (
+        SELECT DISTINCT c.id AS circle_id, c.name AS circle_name
+        FROM plugin_holacracy_c5049b5dfe.role_assignments ra
+        JOIN plugin_holacracy_c5049b5dfe.roles r ON r.id = ra.role_id
+        JOIN plugin_holacracy_c5049b5dfe.circles c ON c.id = r.circle_id
+        WHERE ra.agent_id = ${agentId}::uuid
+      ),
+      latest_period AS (
+        SELECT
+          cr.checklist_id,
+          MAX(cr.period_date) AS period_date
+        FROM plugin_holacracy_c5049b5dfe.checklist_responses cr
+        WHERE cr.created_at >= NOW() - (${CHECKLIST_LOOKBACK_DAYS}::int * INTERVAL '1 day')
+        GROUP BY cr.checklist_id
+      )
+      SELECT
+        cl.id::text                                                   AS "checklistId",
+        cl.item_text                                                  AS "itemText",
+        cl.circle_id::text                                            AS "circleId",
+        mc.circle_name                                                AS "circleName",
+        COUNT(*) FILTER (WHERE cr.checked = TRUE)                     AS "checkedCount",
+        COUNT(*)                                                      AS "totalCount",
+        lp.period_date::text                                          AS "latestPeriod"
+      FROM plugin_holacracy_c5049b5dfe.checklists cl
+      JOIN my_circles mc ON mc.circle_id = cl.circle_id
+      JOIN latest_period lp ON lp.checklist_id = cl.id
+      JOIN plugin_holacracy_c5049b5dfe.checklist_responses cr
+        ON cr.checklist_id = cl.id AND cr.period_date = lp.period_date
+      GROUP BY cl.id, cl.item_text, cl.circle_id, mc.circle_name, lp.period_date
+      ORDER BY lp.period_date DESC NULLS LAST
+      LIMIT ${MAX_CHECKLISTS}
+    `);
+    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows: Row[] }).rows ?? [];
+    return list.map((r): ChecklistEntry => ({
+      checklistId: r.checklistId,
+      itemText: r.itemText,
+      circleId: r.circleId,
+      circleName: r.circleName,
+      checkedCount: Number(r.checkedCount ?? 0),
+      totalCount: Number(r.totalCount ?? 0),
+      latestPeriod: r.latestPeriod,
+    }));
+  } catch (err) {
+    logger.debug({ err, agentId }, "neighbourhood: circle-checklists lookup failed");
+    return [];
+  }
+}
+
+function normalizeStringList(raw: Array<Record<string, unknown> | string> | null | undefined): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string") {
+      const s = item.trim();
+      if (s.length > 0) out.push(s);
+      continue;
+    }
+    if (item && typeof item === "object") {
+      const named =
+        typeof item.name === "string"
+          ? item.name
+          : typeof item.text === "string"
+            ? item.text
+            : typeof item.title === "string"
+              ? item.title
+              : null;
+      if (named && named.trim().length > 0) out.push(named.trim());
+    }
+  }
+  return out;
+}
+
+function toNumOrNull(v: string | number | null | undefined): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function extractCircleIdFromTopic(topic: string): string | null {
   // paperclip/v1/event/{companyId}/{circleId}/{channel}
   const parts = topic.split("/");
@@ -398,6 +741,18 @@ function computeContentHash(snapshot: Omit<NeighbourhoodSnapshot, "contentHash">
   for (const t of snapshot.trustSignals) {
     hash.update(`t:${t.trustedAgentId}:${t.skillSlug}:${t.successfulExchanges}:${t.failedExchanges}\n`);
   }
+  for (const mr of snapshot.myRoles) {
+    hash.update(`mr:${mr.roleId}:${mr.circleId}\n`);
+  }
+  for (const s of snapshot.strategies) {
+    hash.update(`s:${s.id}:${s.createdAt}\n`);
+  }
+  for (const m of snapshot.metrics) {
+    hash.update(`m:${m.metricId}:${m.latestPeriod ?? ""}:${m.latestValue ?? ""}\n`);
+  }
+  for (const c of snapshot.checklists) {
+    hash.update(`c:${c.checklistId}:${c.latestPeriod ?? ""}:${c.checkedCount}/${c.totalCount}\n`);
+  }
   return hash.digest("hex");
 }
 
@@ -421,7 +776,18 @@ export async function buildNeighbourhoodSnapshot(
   const generatedAt = new Date().toISOString();
   // Run loaders in parallel. consumePerceptions has a side-effect
   // (the UPDATE) but is otherwise independent.
-  const [dna, neighbours, recentPulses, unconsumedPerceptions, activeDiscussions, trustSignals] = await Promise.all([
+  const [
+    dna,
+    neighbours,
+    recentPulses,
+    unconsumedPerceptions,
+    activeDiscussions,
+    trustSignals,
+    myRoles,
+    strategies,
+    metrics,
+    checklists,
+  ] = await Promise.all([
     getCompanyDna(db, companyId).catch((err) => {
       logger.debug({ err, companyId }, "neighbourhood: DNA load failed");
       return null;
@@ -431,6 +797,10 @@ export async function buildNeighbourhoodSnapshot(
     consumePerceptions(db, agentId),
     loadActiveDiscussions(db, agentId),
     loadTrustSignals(db, agentId),
+    loadMyRoles(db, agentId),
+    loadCircleStrategies(db, agentId),
+    loadCircleMetrics(db, agentId),
+    loadCircleChecklists(db, agentId),
   ]);
 
   const partial: Omit<NeighbourhoodSnapshot, "contentHash"> = {
@@ -443,6 +813,10 @@ export async function buildNeighbourhoodSnapshot(
     unconsumedPerceptions: unconsumedPerceptions.slice(0, MAX_PERCEPTIONS),
     activeDiscussions: activeDiscussions.slice(0, MAX_ACTIVE_DISCUSSIONS),
     trustSignals: trustSignals.slice(0, MAX_TRUST_SIGNALS),
+    myRoles: myRoles.slice(0, MAX_MY_ROLES),
+    strategies,
+    metrics: metrics.slice(0, MAX_METRICS),
+    checklists: checklists.slice(0, MAX_CHECKLISTS),
   };
   return {
     ...partial,
@@ -583,6 +957,67 @@ export function renderNeighbourhoodMarkdown(snapshot: NeighbourhoodSnapshot): st
     }
   }
   lines.push("");
+
+  // Phase 1.15h-g2 — agent's OWN role(s) so the LLM can reason from its
+  // own purpose + accountabilities, not just peers'.
+  if (snapshot.myRoles.length > 0) {
+    lines.push("## Your role");
+    for (const role of snapshot.myRoles) {
+      const circleSuffix = role.circleName ? ` in ${role.circleName}` : "";
+      const purpose = role.purpose && role.purpose.trim().length > 0 ? role.purpose.trim() : "_(no purpose recorded)_";
+      lines.push(`**${role.roleName}** (${role.roleType}${circleSuffix}) — purpose: ${purpose}`);
+      if (role.accountabilities.length > 0) {
+        lines.push("");
+        lines.push("Accountabilities:");
+        for (const a of role.accountabilities.slice(0, MAX_ACCOUNTABILITIES_SHOWN)) {
+          lines.push(`- ${a}`);
+        }
+      }
+      if (role.domains.length > 0) {
+        lines.push("");
+        lines.push(`Domains: ${role.domains.slice(0, MAX_DOMAINS_SHOWN).join(", ")}`);
+      }
+      lines.push("");
+    }
+  }
+
+  // Circle strategies — top N most-recent active strategies per circle.
+  if (snapshot.strategies.length > 0) {
+    lines.push("## Circle strategies");
+    for (const s of snapshot.strategies) {
+      const circle = s.circleName ?? s.circleId.slice(0, 8);
+      const setBy = s.setByName ? ` — _${s.setByName}_` : s.setBy ? ` — _${s.setBy.slice(0, 8)}_` : "";
+      lines.push(`- [${circle}] ${truncate(s.text, 200)}${setBy}`);
+    }
+    lines.push("");
+  }
+
+  // Recent circle metrics — latest value with trend vs the prior period.
+  if (snapshot.metrics.length > 0) {
+    lines.push("## Recent circle metrics");
+    for (const m of snapshot.metrics) {
+      const circle = m.circleName ?? m.circleId.slice(0, 8);
+      const unit = m.unit ? ` ${m.unit}` : "";
+      const value = m.latestValue !== null ? `${m.latestValue}${unit}` : "(no value)";
+      const trendStr =
+        m.trend === "unknown" || m.priorValue === null
+          ? "no prior data"
+          : `${m.trend} vs ${m.priorValue}${unit}`;
+      lines.push(`- [${circle}] ${m.metricName}: ${value} (${trendStr})`);
+    }
+    lines.push("");
+  }
+
+  // Recent checklist outcomes — checked/total for the most-recent period.
+  if (snapshot.checklists.length > 0) {
+    lines.push("## Recent checklist outcomes");
+    for (const c of snapshot.checklists) {
+      const circle = c.circleName ?? c.circleId.slice(0, 8);
+      const period = c.latestPeriod ? ` (period ${c.latestPeriod})` : "";
+      lines.push(`- [${circle}] ${truncate(c.itemText, 80)}: ${c.checkedCount}/${c.totalCount}${period}`);
+    }
+    lines.push("");
+  }
 
   // Trust signals (Phase 1.15f) — who you trust for what.
   lines.push(`### Trust signals (${snapshot.trustSignals.length})`);

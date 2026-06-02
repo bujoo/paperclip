@@ -33,11 +33,15 @@ For each governance tension:
 
 **Tension:** "Documentation Lead role needs clarity on content ownership"
 
-- **Proposal:** Update domain to include "all user-facing content"
+**Tension context (MYA-58 research)**: Previous roles lacked explicit domain definitions. Tensions escalated when multiple roles claimed same content areas. Proposal: add explicit domain boundaries to prevent overlap.
+
+- **Proposal:** Update Documentation Lead domain to include "all user-facing content"
 - **Clarifying Q:** "Internal wiki docs?" → "No, just external site."
 - **Reactions:** "Good ownership." / "Might conflict with Circle Lead domain."
-- **Amendment:** Refine domain language
-- **Decision:** Approved. Update in Paperclip.
+- **Amendment:** Refine domain language: "Documentation Lead owns external user documentation site and its tooling. Internal wikis remain Circle's domain."
+- **Decision:** Approved. Update in Paperclip. Secretary records tension resolution in issue MYA-173.
+
+**Learning**: Governance decisions are most useful when future agents can trace back to the tension that prompted them. Record tension ID + summary in decision minutes.
 
 ---
 

@@ -40,6 +40,7 @@ import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { adapterRoutes } from "./routes/adapters.js";
+import { holacracyBridgeRoutes } from "./routes/holacracy-bridge.js";
 import { mqttAuthRoutes } from "./mqtt/auth-backend.js";
 import { mqttAclRoutes } from "./mqtt/acl-backend.js";
 import { requireMqttInternalAuth } from "./mqtt/internal-auth.js";
@@ -288,6 +289,10 @@ export async function createApp(
     ),
   );
   api.use(adapterRoutes());
+  // Phase 1.15h-h3 — HTTP tool-execution bridge for hermes_local agents to
+  // invoke holacracy plugin tools (raise tension, forward tension, talk-to-
+  // agent, ask-skill, broadcast). Mounted under /api/holacracy/*.
+  api.use(holacracyBridgeRoutes(db, { toolDispatcher }));
   // EMQX HTTP Auth + ACL callbacks (mounted under /api → /api/internal/mqtt-auth, /api/internal/mqtt-acl).
   // These endpoints are called by the broker on every CONNECT. The
   // `requireMqttInternalAuth()` middleware enforces a shared-secret header

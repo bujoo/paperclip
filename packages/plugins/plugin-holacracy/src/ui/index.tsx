@@ -2912,6 +2912,11 @@ interface FeedItemLifecycle {
   topic: string;
   conclusion: string | null;
   conclusionKind: string | null;
+  /** Phase 1.15h-i #9 — Set when the conclude path auto-opened an IDM
+   *  approval to run support-with-objection / block signals through the
+   *  canonical 6-phase state machine. NULL when no IDM follow-up was
+   *  needed (or when this is the "opened" lifecycle marker). */
+  idmApprovalId?: string | null;
 }
 interface FeedItemCommitment {
   kind: "commitment";
@@ -3116,10 +3121,28 @@ export function CircleMessagesSection({ circleId }: { circleId: string | null })
   const [topic, setTopic] = useState("");
   const [prompt, setPrompt] = useState("");
   const [rounds, setRounds] = useState(1);
-  const [speakerMode, setSpeakerMode] = useState<"reverse-priority" | "roundtable" | "parallel">("reverse-priority");
+  // Phase 1.15h-i — renamed `reverse-priority` → `psych_safety` (Grove/psych-
+  // safety overlay; not Holacracy doctrine). Worker accepts both as aliases.
+  const [speakerMode, setSpeakerMode] = useState<"psych_safety" | "roundtable" | "parallel">("psych_safety");
   const [busy, setBusy] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [showStart, setShowStart] = useState(false);
+  // Phase 1.15h-h1 — SMART scoping inputs.
+  const [successCriterion, setSuccessCriterion] = useState("");
+  const [scopeIn, setScopeIn] = useState("");
+  const [scopeOut, setScopeOut] = useState("");
+  const [decisionDeadline, setDecisionDeadline] = useState("");
+  const [expectedOutputKind, setExpectedOutputKind] = useState<
+    "policy" | "agreement" | "next_action" | "role" | "tension_forward" | "metric_change" | "strategy_update" | "note"
+  >("next_action");
+  // Phase 1.15h-i #2 — Grove pre-flight (HOM ch. 5). All optional. We don't
+  // have a circle-members fetch in this component, so accept comma-separated
+  // agent UUIDs (the SDK validates them).
+  const [groveOpen, setGroveOpen] = useState(false);
+  const [decisionOwnerAgentId, setDecisionOwnerAgentId] = useState("");
+  const [consultedAgentIdsCsv, setConsultedAgentIdsCsv] = useState("");
+  const [ratifierAgentId, setRatifierAgentId] = useState("");
+  const [informedAgentIdsCsv, setInformedAgentIdsCsv] = useState("");
 
   const fmtTime = (s: string) => {
     try {
@@ -3157,19 +3180,52 @@ export function CircleMessagesSection({ circleId }: { circleId: string | null })
     fontSize: 12, cursor: "pointer", fontWeight: active ? 600 : 500,
   });
 
+  const splitCsv = (s: string): string[] =>
+    s.split(",").map((x) => x.trim()).filter(Boolean);
+
+  const canStart = topic.trim().length > 0 && successCriterion.trim().length > 0;
+
   const handleStart = async () => {
-    if (!topic.trim()) return;
+    if (!canStart) return;
     setBusy(true);
     setErrMsg(null);
     try {
+      const trimmedOwner = decisionOwnerAgentId.trim();
+      const trimmedRatifier = ratifierAgentId.trim();
       await createDiscussion({
         circleId,
         topic: topic.trim(),
         prompt: prompt.trim() || undefined,
         rounds,
         speakerMode,
+        // Phase 1.15h-h1 — SMART payload.
+        successCriterion: successCriterion.trim(),
+        scopeIn: splitCsv(scopeIn),
+        scopeOut: splitCsv(scopeOut),
+        decisionDeadline: decisionDeadline
+          ? new Date(decisionDeadline).toISOString()
+          : undefined,
+        expectedOutputKind,
+        // Phase 1.15h-i #2 — Grove pre-flight payload (all optional).
+        decisionOwnerAgentId: trimmedOwner || null,
+        consultedAgentIds: splitCsv(consultedAgentIdsCsv),
+        ratifierAgentId: trimmedRatifier || null,
+        informedAgentIds: splitCsv(informedAgentIdsCsv),
       });
-      setTopic(""); setPrompt(""); setRounds(1); setShowStart(false);
+      setTopic("");
+      setPrompt("");
+      setRounds(1);
+      setSuccessCriterion("");
+      setScopeIn("");
+      setScopeOut("");
+      setDecisionDeadline("");
+      setExpectedOutputKind("next_action");
+      setDecisionOwnerAgentId("");
+      setConsultedAgentIdsCsv("");
+      setRatifierAgentId("");
+      setInformedAgentIdsCsv("");
+      setGroveOpen(false);
+      setShowStart(false);
       refresh();
     } catch (e: unknown) {
       setErrMsg(e instanceof Error ? e.message : String(e));
@@ -3210,18 +3266,117 @@ export function CircleMessagesSection({ circleId }: { circleId: string | null })
             placeholder="Prompt for agents (optional — default: 'Share your view in 1-2 paragraphs')"
             style={{ ...input, minHeight: 36, fontFamily: "inherit" }}
           />
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+          {/* Phase 1.15h-h1 — SMART scoping. */}
+          <input
+            type="text"
+            value={successCriterion}
+            onChange={(e) => setSuccessCriterion(e.target.value)}
+            placeholder="Success criterion — What proves this is solved? e.g. 'Onboarding survey median ≤ 2 days by 2026-06-15'"
+            style={input}
+          />
+          <input
+            type="text"
+            value={scopeIn}
+            onChange={(e) => setScopeIn(e.target.value)}
+            placeholder="In scope (comma-separated) — e.g. 'onboarding docs, welcome email'"
+            style={input}
+          />
+          <input
+            type="text"
+            value={scopeOut}
+            onChange={(e) => setScopeOut(e.target.value)}
+            placeholder="Out of scope (comma-separated) — derail-guard for off-topic tensions"
+            style={input}
+          />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+            <label style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Decision deadline:</label>
+            <input
+              type="datetime-local"
+              value={decisionDeadline}
+              onChange={(e) => setDecisionDeadline(e.target.value)}
+              style={{ ...input, width: 200, marginBottom: 0 }}
+            />
+            <label style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Expected output:</label>
+            <select
+              value={expectedOutputKind}
+              onChange={(e) => setExpectedOutputKind(e.target.value as typeof expectedOutputKind)}
+              style={{ ...input, width: 170, marginBottom: 0 }}
+            >
+              <option value="policy">policy</option>
+              <option value="agreement">agreement</option>
+              <option value="next_action">next_action</option>
+              <option value="role">role</option>
+              <option value="tension_forward">tension_forward</option>
+              <option value="metric_change">metric_change</option>
+              <option value="strategy_update">strategy_update</option>
+              <option value="note">note</option>
+            </select>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
             <label style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Rounds:</label>
             <select value={rounds} onChange={(e) => setRounds(Number(e.target.value))} style={{ ...input, width: 70, marginBottom: 0 }}>
               {[1, 2, 3].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
             <label style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Mode:</label>
-            <select value={speakerMode} onChange={(e) => setSpeakerMode(e.target.value as typeof speakerMode)} style={{ ...input, width: 180, marginBottom: 0 }}>
-              <option value="reverse-priority">reverse-priority (Lead Link last)</option>
+            <select value={speakerMode} onChange={(e) => setSpeakerMode(e.target.value as typeof speakerMode)} style={{ ...input, width: 320, marginBottom: 0 }}>
+              <option value="psych_safety">psych-safety (Lead Link last — Grove overlay, not Holacracy)</option>
               <option value="roundtable">roundtable (alpha)</option>
               <option value="parallel">parallel (all at once)</option>
             </select>
-            <button style={btn("#22c55e")} onClick={handleStart} disabled={busy || !topic.trim()}>Start</button>
+            <button style={btn("#22c55e")} onClick={handleStart} disabled={busy || !canStart}>Start</button>
+          </div>
+          {speakerMode === "psych_safety" && (
+            <div style={{ fontSize: 11, color: "var(--muted-foreground)", marginTop: -2, marginBottom: 6 }}>
+              psych-safety is a team-practice overlay; Robertson treats reactions as symmetric.
+            </div>
+          )}
+          {/* Phase 1.15h-i #2 — Grove pre-flight (HOM ch. 5). Collapsed by default. */}
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--border)" }}>
+            <button
+              type="button"
+              onClick={() => setGroveOpen(!groveOpen)}
+              style={{
+                background: "transparent", border: "none", padding: 0, fontSize: 12,
+                color: "var(--muted-foreground)", cursor: "pointer", fontWeight: 500,
+              }}
+            >
+              {groveOpen ? "▾" : "▸"} Grove pre-flight (optional) — decision owner / ratifier / consulted / informed
+            </button>
+            {groveOpen && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 11, color: "var(--muted-foreground)", marginBottom: 6 }}>
+                  Grove (High Output Management, ch. 5) prescribes naming WHO DECIDES, WHO IS CONSULTED, WHO RATIFIES, WHO IS INFORMED before any decision-meeting. When a ratifier is set, the steward calls them on a 60-min stall instead of auto-deadlocking.
+                </div>
+                <input
+                  type="text"
+                  value={decisionOwnerAgentId}
+                  onChange={(e) => setDecisionOwnerAgentId(e.target.value)}
+                  placeholder="Decision owner — agent UUID (optional)"
+                  style={input}
+                />
+                <input
+                  type="text"
+                  value={consultedAgentIdsCsv}
+                  onChange={(e) => setConsultedAgentIdsCsv(e.target.value)}
+                  placeholder="Consulted — agent UUIDs, comma-separated (optional)"
+                  style={input}
+                />
+                <input
+                  type="text"
+                  value={ratifierAgentId}
+                  onChange={(e) => setRatifierAgentId(e.target.value)}
+                  placeholder="Ratifier — agent UUID (optional; defaults to Lead Link)"
+                  style={input}
+                />
+                <input
+                  type="text"
+                  value={informedAgentIdsCsv}
+                  onChange={(e) => setInformedAgentIdsCsv(e.target.value)}
+                  placeholder="Informed — agent UUIDs, comma-separated (optional)"
+                  style={input}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3299,6 +3454,28 @@ function FeedItemTile({ item, fmtTime }: { item: FeedItem; fmtTime: (s: string) 
           <span style={badge(color, `discussion ${item.event}`)}/>
           <strong style={{ color: "var(--foreground)" }}>{item.topic}</strong>
           {" · "}{fmtTime(item.at)}
+          {item.event === "concluded" && item.idmApprovalId && (
+            <>
+              {" · "}
+              <span
+                title={`Bridged to IDM approval ${item.idmApprovalId}. The 6-phase Robertson state machine is now running on the discussion's objection signals.`}
+                style={{
+                  display: "inline-block",
+                  padding: "1px 7px",
+                  borderRadius: 9,
+                  background: "color-mix(in oklch, #f59e0b 18%, transparent)",
+                  border: "1px solid #f59e0b",
+                  color: "#f59e0b",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                → IDM #{item.idmApprovalId.slice(0, 8)} (phase: objections)
+              </span>
+            </>
+          )}
         </div>
         {item.event === "concluded" && item.conclusion && (
           <div style={body}>

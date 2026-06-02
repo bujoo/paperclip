@@ -352,6 +352,24 @@ pnpm db:migrate       # Apply migrations
 
 `pnpm test` does not run Playwright. Browser suites stay separate and are typically run only when working on those flows or in CI.
 
+### Running with the MQTT broker (Phase 1.5+)
+
+The A2A transport rides on EMQX. Two convenient modes:
+
+```bash
+# Full integration: containerised db + server + EMQX (auth/ACL wired up).
+cd docker && BETTER_AUTH_SECRET=$(openssl rand -hex 32) docker compose up
+
+# Hybrid: native `pnpm dev` against containerised infra only.
+cd docker && docker compose up db emqx
+# then in another terminal:
+PAPERCLIP_MQTT_BROKER_URL=mqtt://localhost:1883 \
+PAPERCLIP_MQTT_ALLOW_ANONYMOUS_HOST=true \
+pnpm dev
+```
+
+EMQX is configured via `docker/emqx/emqx.conf` to call the server's HTTP auth/ACL backends at `/api/internal/mqtt-{auth,acl}`. The dashboard is at `http://localhost:18083` (login `admin` / `public`).
+
 See [doc/DEVELOPING.md](doc/DEVELOPING.md) for the full development guide.
 
 <br/>

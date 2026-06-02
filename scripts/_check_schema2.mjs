@@ -1,0 +1,10 @@
+import pgModule from '/Users/tom/paperclip/node_modules/.pnpm/pg@8.18.0/node_modules/pg/lib/index.js';
+const c = new pgModule.Client({host:'127.0.0.1', port:54329, user:'paperclip', database:'paperclip', password:'paperclip'});
+await c.connect();
+const r = await c.query("SELECT to_regclass('public.agent_trust_signals') AS ats, to_regclass('public.discussion_commitments') AS dc");
+console.log(r.rows);
+const ats = await c.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='agent_trust_signals' ORDER BY ordinal_position");
+console.log('agent_trust_signals:', ats.rows.map(r=>r.column_name));
+const dc = await c.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='discussion_commitments' ORDER BY ordinal_position");
+console.log('discussion_commitments:', dc.rows.map(r=>r.column_name));
+await c.end();

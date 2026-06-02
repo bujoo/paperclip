@@ -174,6 +174,14 @@ const manifest: PaperclipPluginManifestV1 = {
       description: "Sweep open circle_discussions; promote rounds when complete; spawn next-round issues or Secretary-Summarizer when planned rounds finish.",
       schedule: "* * * * *",
     },
+    // Phase 1.15h-g1 — Steward (auto-healer). Safety net for runtime
+    // pathologies — runs every 5 minutes, idempotent within bucket.
+    {
+      jobKey: "steward-healer",
+      displayName: "Steward (Auto-Heal)",
+      description: "Scans every 5 minutes for system pathologies — broken adapters, high failure rates, runaway agent loops, stuck discussions, stale commits — and auto-heals or escalates via tensions to the GCC Lead Link.",
+      schedule: "*/5 * * * *",
+    },
   ],
   tools: [
     { name: "holacracy-get-circle", displayName: "Get Holacracy Circle", description: "Get a circle's structure including purpose, roles, sub-circles, and policies", parametersSchema: { type: "object", properties: { circleId: { type: "string" } }, required: ["circleId"] } },

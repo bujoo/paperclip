@@ -41,6 +41,7 @@ import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { adapterRoutes } from "./routes/adapters.js";
 import { holacracyBridgeRoutes } from "./routes/holacracy-bridge.js";
+import { a2aInternalRoutes } from "./routes/a2a-internal.js";
 import { mqttAuthRoutes } from "./mqtt/auth-backend.js";
 import { mqttAclRoutes } from "./mqtt/acl-backend.js";
 import { requireMqttInternalAuth } from "./mqtt/internal-auth.js";
@@ -294,6 +295,9 @@ export async function createApp(
   // invoke holacracy plugin tools (raise tension, forward tension, talk-to-
   // agent, ask-skill, broadcast). Mounted under /api/holacracy/*.
   api.use(holacracyBridgeRoutes(db, { toolDispatcher }));
+  // E8 — internal endpoints the MCP server child process calls to publish A2A
+  // on behalf of the calling agent. Mounted under /api/internal/a2a/*.
+  api.use(a2aInternalRoutes(db));
   // EMQX HTTP Auth + ACL callbacks (mounted under /api → /api/internal/mqtt-auth, /api/internal/mqtt-acl).
   // These endpoints are called by the broker on every CONNECT. The
   // `requireMqttInternalAuth()` middleware enforces a shared-secret header

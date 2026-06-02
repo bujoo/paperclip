@@ -41,7 +41,7 @@ const TOOL = {
   broadcastToCircle: `${HOLACRACY_PLUGIN_KEY}:holacracy-broadcast-to-circle`,
 } as const;
 
-interface ResolvedRequester {
+export interface ResolvedRequester {
   agentId: string;
   companyId: string;
   runId: string;
@@ -62,7 +62,7 @@ interface ResolvedRequester {
  * an arbitrary project from the company (or a synthetic UUID if the
  * company has no projects yet).
  */
-async function resolveRequester(
+export async function resolveRequester(
   db: Db,
   req: Request,
   companyId: string,

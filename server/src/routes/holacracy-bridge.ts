@@ -23,7 +23,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { projects } from "@paperclipai/db";
@@ -64,7 +64,7 @@ interface ResolvedRequester {
  */
 async function resolveRequester(
   db: Db,
-  req: Parameters<Parameters<ReturnType<typeof Router>["post"]>[1]>[0],
+  req: Request,
   companyId: string,
 ): Promise<ResolvedRequester> {
   if (req.actor.type !== "agent") {
@@ -224,6 +224,24 @@ function parseToolContent(content: string | undefined): unknown {
 }
 
 /**
+ * Wrap an async handler with the standard try/catch + JSON-error shell every
+ * bridge endpoint shares. Throwing a `BridgeErrorShape`-like object (or
+ * letting one propagate from `mapWorkerErrorToBridge`) becomes a structured
+ * `{ error, code }` JSON response with the right status.
+ */
+function bridge(
+  handler: (req: Request, res: Response) => Promise<void>,
+): (req: Request, res: Response) => Promise<void> {
+  return async (req, res) => {
+    try {
+      await handler(req, res);
+    } catch (err) {
+      sendError(res, err);
+    }
+  };
+}
+
+/**
  * Construct the Express router for `/api/holacracy/*` bridge endpoints.
  *
  * Routes provided:
@@ -281,42 +299,38 @@ export function holacracyBridgeRoutes(
    * Raise an operational tension in a circle and broadcast it on the
    * circle's MQTT event topic. Proxies `holacracy-raise-tension-on-bus`.
    */
-  router.post("/holacracy/tensions", async (req, res) => {
-    try {
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      const companyId = requireString(body, "companyId");
-      const circleId = requireString(body, "circleId");
-      const title = requireString(body, "title");
-      const tensionBody = requireString(body, "body");
-      const severity = optionalString(body, "severity");
-      if (severity !== undefined && !["low", "medium", "high"].includes(severity)) {
-        throw {
-          status: 400,
-          code: "VALIDATION_ERROR",
-          message: '"severity" must be one of "low", "medium", or "high"',
-        };
-      }
-
-      const requester = await resolveRequester(db, req, companyId);
-      const data = (await executeToolForAgent(TOOL.raiseTensionOnBus, requester, {
-        circleId,
-        title,
-        body: tensionBody,
-        ...(severity ? { severity } : {}),
-      })) as { tensionId?: string; busPublished?: boolean } | string | null;
-
-      if (data && typeof data === "object" && "tensionId" in data) {
-        res.status(200).json({
-          tensionId: data.tensionId ?? null,
-          broadcast: data.busPublished === true,
-        });
-        return;
-      }
-      res.status(200).json({ tensionId: null, broadcast: false, raw: data });
-    } catch (err) {
-      sendError(res, err);
+  router.post("/holacracy/tensions", bridge(async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const companyId = requireString(body, "companyId");
+    const circleId = requireString(body, "circleId");
+    const title = requireString(body, "title");
+    const tensionBody = requireString(body, "body");
+    const severity = optionalString(body, "severity");
+    if (severity !== undefined && !["low", "medium", "high"].includes(severity)) {
+      throw {
+        status: 400,
+        code: "VALIDATION_ERROR",
+        message: '"severity" must be one of "low", "medium", or "high"',
+      };
     }
-  });
+
+    const requester = await resolveRequester(db, req, companyId);
+    const data = (await executeToolForAgent(TOOL.raiseTensionOnBus, requester, {
+      circleId,
+      title,
+      body: tensionBody,
+      ...(severity ? { severity } : {}),
+    })) as { tensionId?: string; busPublished?: boolean } | string | null;
+
+    if (data && typeof data === "object" && "tensionId" in data) {
+      res.status(200).json({
+        tensionId: data.tensionId ?? null,
+        broadcast: data.busPublished === true,
+      });
+      return;
+    }
+    res.status(200).json({ tensionId: null, broadcast: false, raw: data });
+  }));
 
   /**
    * POST /api/holacracy/forward-tension
@@ -324,35 +338,31 @@ export function holacracyBridgeRoutes(
    * Forward a tension from its current circle up to the parent circle.
    * Proxies `holacracy-forward-tension`.
    */
-  router.post("/holacracy/forward-tension", async (req, res) => {
-    try {
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      const companyId = requireString(body, "companyId");
-      const tensionId = requireString(body, "tensionId");
-      const context = optionalString(body, "context") ?? "";
+  router.post("/holacracy/forward-tension", bridge(async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const companyId = requireString(body, "companyId");
+    const tensionId = requireString(body, "tensionId");
+    const context = optionalString(body, "context") ?? "";
 
-      const requester = await resolveRequester(db, req, companyId);
-      const data = (await executeToolForAgent(TOOL.forwardTension, requester, {
-        tensionId,
-        context,
-      })) as
-        | { forwardedTensionId?: string; targetCircleId?: string; status?: string }
-        | string
-        | null;
+    const requester = await resolveRequester(db, req, companyId);
+    const data = (await executeToolForAgent(TOOL.forwardTension, requester, {
+      tensionId,
+      context,
+    })) as
+      | { forwardedTensionId?: string; targetCircleId?: string; status?: string }
+      | string
+      | null;
 
-      if (data && typeof data === "object" && ("forwardedTensionId" in data || "targetCircleId" in data)) {
-        res.status(200).json({
-          forwarded: data.status === "forwarded",
-          parentCircleId: data.targetCircleId ?? null,
-          forwardedTensionId: data.forwardedTensionId ?? null,
-        });
-        return;
-      }
-      res.status(200).json({ forwarded: false, parentCircleId: null, raw: data });
-    } catch (err) {
-      sendError(res, err);
+    if (data && typeof data === "object" && ("forwardedTensionId" in data || "targetCircleId" in data)) {
+      res.status(200).json({
+        forwarded: data.status === "forwarded",
+        parentCircleId: data.targetCircleId ?? null,
+        forwardedTensionId: data.forwardedTensionId ?? null,
+      });
+      return;
     }
-  });
+    res.status(200).json({ forwarded: false, parentCircleId: null, raw: data });
+  }));
 
   /**
    * POST /api/holacracy/talk-to-agent
@@ -360,43 +370,39 @@ export function holacracyBridgeRoutes(
    * Send an A2A Task to a peer agent over MQTT. Proxies
    * `holacracy-talk-to-agent`.
    */
-  router.post("/holacracy/talk-to-agent", async (req, res) => {
-    try {
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      const companyId = requireString(body, "companyId");
-      const toAgentId = requireString(body, "toAgentId");
-      const text = requireString(body, "text");
-      const contextId = optionalString(body, "contextId");
-      const awaitReply = optionalBoolean(body, "awaitReply");
-      const timeoutMs = optionalNumber(body, "timeoutMs");
+  router.post("/holacracy/talk-to-agent", bridge(async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const companyId = requireString(body, "companyId");
+    const toAgentId = requireString(body, "toAgentId");
+    const text = requireString(body, "text");
+    const contextId = optionalString(body, "contextId");
+    const awaitReply = optionalBoolean(body, "awaitReply");
+    const timeoutMs = optionalNumber(body, "timeoutMs");
 
-      const requester = await resolveRequester(db, req, companyId);
-      const data = (await executeToolForAgent(TOOL.talkToAgent, requester, {
-        toAgentId,
-        text,
-        ...(contextId ? { contextId } : {}),
-        ...(awaitReply !== undefined ? { awaitReply } : {}),
-        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-      })) as
-        | { taskId?: string; contextId?: string; awaited?: boolean; reply?: unknown; timedOut?: boolean }
-        | string
-        | null;
+    const requester = await resolveRequester(db, req, companyId);
+    const data = (await executeToolForAgent(TOOL.talkToAgent, requester, {
+      toAgentId,
+      text,
+      ...(contextId ? { contextId } : {}),
+      ...(awaitReply !== undefined ? { awaitReply } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    })) as
+      | { taskId?: string; contextId?: string; awaited?: boolean; reply?: unknown; timedOut?: boolean }
+      | string
+      | null;
 
-      if (data && typeof data === "object" && ("taskId" in data || "contextId" in data)) {
-        res.status(200).json({
-          issueId: data.taskId ?? null,
-          contextId: data.contextId ?? null,
-          awaited: data.awaited === true,
-          timedOut: data.timedOut === true,
-          reply: data.reply ?? null,
-        });
-        return;
-      }
-      res.status(200).json({ issueId: null, contextId: null, raw: data });
-    } catch (err) {
-      sendError(res, err);
+    if (data && typeof data === "object" && ("taskId" in data || "contextId" in data)) {
+      res.status(200).json({
+        issueId: data.taskId ?? null,
+        contextId: data.contextId ?? null,
+        awaited: data.awaited === true,
+        timedOut: data.timedOut === true,
+        reply: data.reply ?? null,
+      });
+      return;
     }
-  });
+    res.status(200).json({ issueId: null, contextId: null, raw: data });
+  }));
 
   /**
    * POST /api/holacracy/ask-skill
@@ -404,43 +410,39 @@ export function holacracyBridgeRoutes(
    * Publish a Task on the skill-pool topic for round-robin pickup by an
    * accountability-holder. Proxies `holacracy-ask-skill`.
    */
-  router.post("/holacracy/ask-skill", async (req, res) => {
-    try {
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      const companyId = requireString(body, "companyId");
-      const skill = requireString(body, "skill");
-      const text = requireString(body, "text");
-      const contextId = optionalString(body, "contextId");
-      const awaitReply = optionalBoolean(body, "awaitReply");
-      const timeoutMs = optionalNumber(body, "timeoutMs");
+  router.post("/holacracy/ask-skill", bridge(async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const companyId = requireString(body, "companyId");
+    const skill = requireString(body, "skill");
+    const text = requireString(body, "text");
+    const contextId = optionalString(body, "contextId");
+    const awaitReply = optionalBoolean(body, "awaitReply");
+    const timeoutMs = optionalNumber(body, "timeoutMs");
 
-      const requester = await resolveRequester(db, req, companyId);
-      const data = (await executeToolForAgent(TOOL.askSkill, requester, {
-        skill,
-        text,
-        ...(contextId ? { contextId } : {}),
-        ...(awaitReply !== undefined ? { awaitReply } : {}),
-        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-      })) as
-        | { taskId?: string; contextId?: string; awaited?: boolean; reply?: unknown; timedOut?: boolean }
-        | string
-        | null;
+    const requester = await resolveRequester(db, req, companyId);
+    const data = (await executeToolForAgent(TOOL.askSkill, requester, {
+      skill,
+      text,
+      ...(contextId ? { contextId } : {}),
+      ...(awaitReply !== undefined ? { awaitReply } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    })) as
+      | { taskId?: string; contextId?: string; awaited?: boolean; reply?: unknown; timedOut?: boolean }
+      | string
+      | null;
 
-      if (data && typeof data === "object" && ("taskId" in data || "contextId" in data)) {
-        res.status(200).json({
-          taskId: data.taskId ?? null,
-          contextId: data.contextId ?? null,
-          awaited: data.awaited === true,
-          timedOut: data.timedOut === true,
-          reply: data.reply ?? null,
-        });
-        return;
-      }
-      res.status(200).json({ taskId: null, contextId: null, raw: data });
-    } catch (err) {
-      sendError(res, err);
+    if (data && typeof data === "object" && ("taskId" in data || "contextId" in data)) {
+      res.status(200).json({
+        taskId: data.taskId ?? null,
+        contextId: data.contextId ?? null,
+        awaited: data.awaited === true,
+        timedOut: data.timedOut === true,
+        reply: data.reply ?? null,
+      });
+      return;
     }
-  });
+    res.status(200).json({ taskId: null, contextId: null, raw: data });
+  }));
 
   /**
    * POST /api/holacracy/broadcast
@@ -448,48 +450,41 @@ export function holacracyBridgeRoutes(
    * Publish an announcement on a circle's event topic. Proxies
    * `holacracy-broadcast-to-circle`.
    */
-  router.post("/holacracy/broadcast", async (req, res) => {
-    try {
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      const companyId = requireString(body, "companyId");
-      const circleId = requireString(body, "circleId");
-      const kind = requireString(body, "kind");
-      if (!("body" in body)) {
-        throw {
-          status: 400,
-          code: "VALIDATION_ERROR",
-          message: '"body" is required',
-        };
-      }
-      const broadcastBody = body.body;
-
-      const requester = await resolveRequester(db, req, companyId);
-      const data = (await executeToolForAgent(TOOL.broadcastToCircle, requester, {
-        circleId,
-        kind,
-        body: broadcastBody,
-      })) as { topic?: string; published?: boolean } | string | null;
-
-      if (data && typeof data === "object" && "topic" in data) {
-        res.status(200).json({
-          broadcast: data.published !== false,
-          topic: data.topic ?? null,
-        });
-        return;
-      }
-      res.status(200).json({ broadcast: false, topic: null, raw: data });
-    } catch (err) {
-      sendError(res, err);
+  router.post("/holacracy/broadcast", bridge(async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const companyId = requireString(body, "companyId");
+    const circleId = requireString(body, "circleId");
+    const kind = requireString(body, "kind");
+    if (!("body" in body)) {
+      throw {
+        status: 400,
+        code: "VALIDATION_ERROR",
+        message: '"body" is required',
+      };
     }
-  });
+    const broadcastBody = body.body;
+
+    const requester = await resolveRequester(db, req, companyId);
+    const data = (await executeToolForAgent(TOOL.broadcastToCircle, requester, {
+      circleId,
+      kind,
+      body: broadcastBody,
+    })) as { topic?: string; published?: boolean } | string | null;
+
+    if (data && typeof data === "object" && "topic" in data) {
+      res.status(200).json({
+        broadcast: data.published !== false,
+        topic: data.topic ?? null,
+      });
+      return;
+    }
+    res.status(200).json({ broadcast: false, topic: null, raw: data });
+  }));
 
   return router;
 }
 
-function sendError(
-  res: Parameters<Parameters<ReturnType<typeof Router>["post"]>[1]>[1],
-  err: unknown,
-): void {
+function sendError(res: Response, err: unknown): void {
   if (isBridgeError(err)) {
     res.status(err.status).json({ error: err.message, code: err.code });
     return;

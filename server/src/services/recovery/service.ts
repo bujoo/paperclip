@@ -8,6 +8,7 @@ import {
   type IssueGraphLivenessAutoRecoveryPreviewItem,
 } from "@paperclipai/shared";
 import {
+  activityLog,
   agents,
   agentWakeupRequests,
   approvals,
@@ -1716,14 +1717,52 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       });
     }
 
+    // R1 — D2 per-issue cap. The existing 6h/24h wrapper guard only counts
+    // sibling-recovery wrappers (STRANDED_ISSUE_RECOVERY_ORIGIN_KIND). D2 re-routes
+    // don't create wrappers — they just reassign — so they bypass the cap entirely.
+    // Observed live: MYA-348 ping-ponged Hermes ↔ Facilitator 8 times in 16 min because
+    // `resolveAlternativeRoleFiller` deterministically returns the other agent in a
+    // 2-agent role pool. After 2+ recent re-routes on the same issue, stop re-routing
+    // and fall through to the recovery-wrapper path which will block the issue.
+    const D2_REROUTE_CAP = 2;
+    const D2_REROUTE_WINDOW_MS = 6 * 60 * 60 * 1000;
+    const recentReroutesWindow = new Date(Date.now() - D2_REROUTE_WINDOW_MS);
+    const recentReroutes = await db
+      .select({ id: activityLog.id })
+      .from(activityLog)
+      .where(
+        and(
+          eq(activityLog.entityType, "issue"),
+          eq(activityLog.entityId, input.issue.id),
+          eq(activityLog.action, "issue.updated"),
+          sql`${activityLog.details}->>'source' = 'recovery.reroute_to_alternative_filler'`,
+          gt(activityLog.createdAt, recentReroutesWindow),
+        ),
+      )
+      .limit(D2_REROUTE_CAP + 1);
+    const d2RecentCount = recentReroutes.length;
+
     // D2: attempt re-route to alternative role filler before spawning a sibling recovery issue
-    const alternativeFillerId = await resolveAlternativeRoleFiller(input.issue);
+    const alternativeFillerId = d2RecentCount >= D2_REROUTE_CAP
+      ? null
+      : await resolveAlternativeRoleFiller(input.issue);
     if (alternativeFillerId) {
       return rerouteOriginalIssueToAlternativeFiller(
         input.issue,
         alternativeFillerId,
         input.previousStatus,
         input.latestRun,
+      );
+    }
+    if (d2RecentCount >= D2_REROUTE_CAP) {
+      logger.warn(
+        {
+          issueId: input.issue.id,
+          identifier: input.issue.identifier,
+          d2RecentCount,
+          cap: D2_REROUTE_CAP,
+        },
+        "stranded-detector: D2 re-route cap reached; falling through to recovery wrapper / block",
       );
     }
 

@@ -681,6 +681,30 @@ export function issueThreadInteractionService(db: Db) {
         });
       }
 
+      // R2 — dedupe ask_user_questions interactions.
+      // If a `pending` ask_user_questions already exists on this issue, return it
+      // instead of creating another. The user can only answer one at a time, and
+      // multiple agents creating overlapping questionnaires (observed on MYA-348)
+      // creates UX confusion and wastes agent turns. Returning the existing one
+      // lets the calling agent see "ok, the form is already up" without erroring.
+      if (data.kind === "ask_user_questions") {
+        const existingPending = await db
+          .select()
+          .from(issueThreadInteractions)
+          .where(
+            and(
+              eq(issueThreadInteractions.companyId, issue.companyId),
+              eq(issueThreadInteractions.issueId, issue.id),
+              eq(issueThreadInteractions.kind, "ask_user_questions"),
+              eq(issueThreadInteractions.status, "pending"),
+            ),
+          )
+          .limit(1);
+        if (existingPending.length > 0) {
+          return hydrateInteraction(existingPending[0]!);
+        }
+      }
+
       let created: IssueThreadInteractionRow;
       try {
         [created] = await db

@@ -105,6 +105,27 @@ export function crossLinkTopic(companyId: string, crossLinkId: string): string {
 }
 
 /**
+ * Phase 1.17 — Company-wide directive topic. ONE inbound publish from
+ * an external client (CLI, n8n, service account, another Paperclip
+ * instance) triggers the server to materialise N issues for the targeted
+ * recipients (typically each circle's Lead Link). Each recipient agent
+ * wakes via the normal `issue.assigned` path and acts on the directive
+ * using their bundled skills.
+ *
+ * Payload shape:
+ *   {
+ *     "kind": "plan-routines" | "plan-goals" | "weekly-review" | ...,
+ *     "body": "free-text instruction included in each materialised issue",
+ *     "scope": "lead_links" | "all_agents" | { "circleIds": ["..."] }
+ *   }
+ *
+ * ACL: service-account publish allowed; host subscribe to materialise.
+ */
+export function directiveTopic(companyId: string): string {
+  return `${A2A_PREFIX}/directive/${companyId}`;
+}
+
+/**
  * Phase 1.8 — Host heartbeat broadcast per company. Carries the polyrhythm
  * snapshot and degraded-mode state. Published QoS 0, retain false (every
  * subscriber sees the live tick; late joiners wait < 30s for the next one).

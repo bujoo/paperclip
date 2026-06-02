@@ -82,7 +82,7 @@ function deriveTitle(task: A2ATask): string {
   return text.length > 200 ? text.slice(0, 200) : text;
 }
 
-export type InboundTopicClass = "request" | "broadcast" | "ignored";
+export type InboundTopicClass = "request" | "broadcast" | "directive" | "ignored";
 
 /**
  * Classify an inbound MQTT topic into one of three routing buckets. The
@@ -146,6 +146,11 @@ export function classifyInboundTopic(topic: string): InboundTopicClass {
       // Treat as a broadcast (record into agent_perceptions) AND mark
       // wake_eligible so the heartbeat scheduler enqueues a wakeup.
       return "broadcast";
+    case "directive":
+      // Phase 1.17 — $a2a/v1/directive/{companyId}. One inbound publish
+      // materialises N issues (one per recipient per the scope). Routed
+      // to a dedicated handler, NOT through the perception/issue paths.
+      return "directive";
     default:
       return "ignored";
   }
@@ -204,6 +209,10 @@ export async function handleA2AInbound(
   }
   if (cls === "broadcast") {
     await handleBroadcastInbound(ctx, slot, msg, actorId);
+    return;
+  }
+  if (cls === "directive") {
+    await handleDirectiveInbound(ctx, msg, actorId);
     return;
   }
   await handleRequestInbound(ctx, slot, msg, actorId);
@@ -415,4 +424,218 @@ async function handleBroadcastInbound(
       `${actorId}: failed to record perception`,
     );
   }
+}
+
+/**
+ * Phase 1.17 — `$a2a/v1/directive/{companyId}` handler.
+ *
+ * ONE external publish triggers fan-out to N recipients. Each recipient
+ * gets ONE issue (assigned to them) whose body references the bundled
+ * skill they should invoke. Claude Code matches issue text to skill
+ * frontmatter description automatically.
+ *
+ * Payload shape (Zod-validated):
+ *   {
+ *     "kind": "plan-routines" | "plan-goals" | ...,
+ *     "body": "free-text instruction shown to each recipient",
+ *     "scope": "lead_links" | "all_agents" | { "circleIds": ["uuid", ...] }
+ *   }
+ *
+ * Recipient resolution per scope:
+ *   - "lead_links"           → every agent holding role_type='circle_lead'
+ *   - "all_agents"           → every non-archived agent in the company
+ *   - { circleIds: [...] }   → every agent whose home circle is in the list
+ */
+const DirectiveScopeSchema = z.union([
+  z.literal("lead_links"),
+  z.literal("all_agents"),
+  z.object({ circleIds: z.array(z.string().uuid()).min(1) }),
+]);
+
+const DirectiveSchema = z.object({
+  kind: z.string().min(1),
+  body: z.string().min(1),
+  scope: DirectiveScopeSchema.optional().default("lead_links"),
+  title: z.string().optional(),
+});
+
+interface DirectiveKindStub {
+  defaultTitle: (circleName: string) => string;
+  defaultBody: (circleName: string, circleId: string) => string;
+  skillHint: string;
+}
+
+const DIRECTIVE_KINDS: Record<string, DirectiveKindStub> = {
+  "plan-routines": {
+    defaultTitle: (circleName) =>
+      `[Directive] Plan recurring meeting routines for ${circleName}`,
+    defaultBody: (circleName, circleId) =>
+      [
+        `**Directive**: Create the recurring meeting routines for the **${circleName}** circle (id: \`${circleId}\`).`,
+        ``,
+        `**Skill to use**: \`paperclip-create-recurring-routine\`.`,
+        ``,
+        `**Required**:`,
+        `- ONE governance meeting routine (weekly, 1.5h)`,
+        `- ONE tactical meeting routine (weekly, 1.5h)`,
+        ``,
+        `Each routine MUST have a \`schedule_trigger\` with a cron expression in UTC. Pick times that don't clash with sibling circles' meetings (check existing routines in the company first).`,
+        ``,
+        `Assign each routine to the **Facilitator** role-holder (the agent who runs the meeting). The Secretary captures minutes after.`,
+        ``,
+        `When done: comment with the routine IDs + next_run_at + close this issue. Do NOT decompose into static child tasks — the routine + trigger pair IS the recurring event.`,
+      ].join("\n"),
+    skillHint: "paperclip-create-recurring-routine",
+  },
+  "plan-goals": {
+    defaultTitle: (circleName) =>
+      `[Directive] Set quarterly goals for ${circleName}`,
+    defaultBody: (circleName, circleId) =>
+      [
+        `**Directive**: Define this quarter's goals for the **${circleName}** circle (id: \`${circleId}\`).`,
+        ``,
+        `**Skill to use**: \`paperclip-create-goal\`.`,
+        ``,
+        `**Required**:`,
+        `- ONE quarterly objective goal (level=objective) under the company's current strategy goal`,
+        `- 2-4 task goals under that objective`,
+        ``,
+        `Owner of the objective is YOU (the Lead Link of this circle). Task owners can be specialist role-holders.`,
+      ].join("\n"),
+    skillHint: "paperclip-create-goal",
+  },
+};
+
+interface RecipientRow extends Record<string, unknown> {
+  agentId: string;
+  agentName: string;
+  circleId: string;
+  circleName: string;
+}
+
+async function resolveLeadLinks(
+  db: Db,
+  companyId: string,
+): Promise<RecipientRow[]> {
+  const rows = (await db.execute<RecipientRow>(sql`
+    SELECT
+      a.id::text   AS "agentId",
+      a.name       AS "agentName",
+      c.id::text   AS "circleId",
+      c.name       AS "circleName"
+    FROM public.agents a
+    JOIN plugin_holacracy_c5049b5dfe.role_assignments ra ON ra.agent_id = a.id
+    JOIN plugin_holacracy_c5049b5dfe.roles r              ON r.id = ra.role_id
+    JOIN plugin_holacracy_c5049b5dfe.circles c            ON c.id = r.circle_id
+    WHERE a.company_id = ${companyId}::uuid
+      AND a.status NOT IN ('archived','terminated')
+      AND r.role_type = 'circle_lead'
+    ORDER BY c.name, a.name
+  `)) as unknown as { rows: RecipientRow[] } | RecipientRow[];
+  return Array.isArray(rows) ? rows : rows.rows ?? [];
+}
+
+/**
+ * Phase 1.17 — wire the host singleton's subscription to the directive
+ * wildcard. Call once at server bootstrap (after `initMqtt()`).
+ * Idempotent — subscribing twice is a no-op (mqtt.js dedupes filters).
+ */
+export async function initDirectiveSubscription(db: Db): Promise<void> {
+  const { subscribe } = await import("./client.js");
+  await subscribe("$a2a/v1/directive/+", (msg) => {
+    void handleDirectiveInbound({ db, actorId: "a2a-directive-dispatcher" }, msg, "a2a-directive-dispatcher");
+  });
+  logger.info({ filter: "$a2a/v1/directive/+" }, "directive-dispatcher: host subscribed");
+}
+
+async function handleDirectiveInbound(
+  ctx: InboundHandlerContext,
+  msg: SubscribeMessage,
+  actorId: string,
+): Promise<void> {
+  // Topic = `$a2a/v1/directive/{companyId}` → companyId is the 4th segment
+  const segments = msg.topic.split("/");
+  const companyId = segments[3];
+  if (!companyId) {
+    logger.warn({ topic: msg.topic }, `${actorId}: directive missing companyId in topic`);
+    return;
+  }
+
+  const decoded = decodePayload(msg.payload);
+  const parsed = DirectiveSchema.safeParse(decoded);
+  if (!parsed.success) {
+    logger.warn(
+      { topic: msg.topic, err: parsed.error.flatten(), preview: msg.payload.toString("utf-8").slice(0, 200) },
+      `${actorId}: invalid directive payload, dropping`,
+    );
+    return;
+  }
+  const directive = parsed.data;
+  const stub = DIRECTIVE_KINDS[directive.kind];
+  if (!stub) {
+    logger.warn(
+      { topic: msg.topic, kind: directive.kind },
+      `${actorId}: unknown directive kind, dropping`,
+    );
+    return;
+  }
+
+  // Resolve recipients
+  let recipients: RecipientRow[] = [];
+  try {
+    if (directive.scope === "lead_links") {
+      recipients = await resolveLeadLinks(ctx.db, companyId);
+    } else {
+      logger.warn({ scope: directive.scope }, `${actorId}: directive scope not yet implemented`);
+      return;
+    }
+  } catch (err) {
+    logger.warn({ err, companyId }, `${actorId}: directive recipient resolution failed`);
+    return;
+  }
+  if (recipients.length === 0) {
+    logger.warn({ companyId, scope: directive.scope }, `${actorId}: directive resolved zero recipients`);
+    return;
+  }
+
+  // Fan out: ONE issue per recipient
+  const svc = issueService(ctx.db);
+  let materialised = 0;
+  for (const r of recipients) {
+    const title = directive.title ?? stub.defaultTitle(r.circleName);
+    const body = `${directive.body}\n\n---\n\n${stub.defaultBody(r.circleName, r.circleId)}`;
+    try {
+      const created = await svc.create(companyId, {
+        title,
+        description: body,
+        kind: "next_action",
+        status: "todo",
+        assigneeAgentId: r.agentId,
+        originKind: "a2a:directive",
+        originId: `${directive.kind}:${r.agentId}`,
+        originFingerprint: `directive:${directive.kind}:${r.agentId}:${Date.now()}`,
+        originTopic: msg.topic,
+      } as Parameters<typeof svc.create>[1]);
+      materialised += 1;
+      await logActivity(ctx.db, {
+        companyId,
+        actorType: "system",
+        actorId,
+        action: "a2a.directive_materialised",
+        entityType: "issue",
+        entityId: created.id,
+        agentId: r.agentId,
+        details: { kind: directive.kind, scope: "lead_links", circleId: r.circleId, skillHint: stub.skillHint },
+      }).catch(() => {});
+    } catch (err) {
+      logger.warn(
+        { err, agentId: r.agentId, kind: directive.kind },
+        `${actorId}: directive issue creation failed for recipient`,
+      );
+    }
+  }
+  logger.info(
+    { companyId, kind: directive.kind, recipients: recipients.length, materialised },
+    `${actorId}: directive fan-out complete`,
+  );
 }

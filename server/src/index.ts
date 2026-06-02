@@ -939,6 +939,15 @@ export async function startServer(): Promise<StartedServer> {
       logger.warn({ err }, "Agent runtime bridge wiring failed; A2A request bridging disabled");
     }
     try {
+      // Phase 1.17 — subscribe host singleton to `$a2a/v1/directive/+` so
+      // company-wide directives (plan-routines, plan-goals, etc.) fan out
+      // to N agent-assigned issues. See server/src/mqtt/inbound-handler.ts.
+      const { initDirectiveSubscription } = await import("./mqtt/inbound-handler.js");
+      await initDirectiveSubscription(db as any);
+    } catch (err) {
+      logger.warn({ err }, "Directive subscription wiring failed; company-wide directives disabled");
+    }
+    try {
       await initHeartbeatBridge(db as any);
     } catch (err) {
       logger.warn({ err }, "Heartbeat bridge wiring failed; MQTT heartbeat disabled");

@@ -95,16 +95,46 @@ interface CachedAcl {
 const _aclCache: Map<string, CachedAcl> = new Map();
 
 /**
+ * Concurrent ACL-load de-duplication.
+ *
+ * When EMQX asks our backend about an agent whose cache entry is empty, we
+ * spawn a DB load. If several ACL requests for the same agent arrive in
+ * quick succession (e.g. one publish + one subscribe within ms of each
+ * other) we want all of them to await the SAME in-flight load — otherwise
+ * they each issue a SELECT that may read a slightly different snapshot,
+ * and whichever finishes LAST wins the cache write.
+ */
+const _aclInFlight: Map<string, Promise<AgentAclProfile>> = new Map();
+
+/**
+ * Per-agent invalidation epoch. Bumped by `invalidateAclCache(agentId)` so
+ * a load started BEFORE invalidate can detect that its snapshot is now
+ * stale and skip writing to cache (the next request triggers a fresh load
+ * that runs AFTER any pending DB commits — e.g. the freshly-inserted
+ * `circle_discussions` row).
+ */
+const _aclEpoch: Map<string, number> = new Map();
+
+/**
  * Public hook called by `role_assignment.created` / `role_assignment.deleted`
- * (or any other event that changes an agent's circle/role membership) so the
- * next ACL fetch goes back to the DB.
+ * / `discussion.create` (or any other event that changes an agent's
+ * circle/role/discussion membership) so the next ACL fetch goes back to the DB.
  */
 export function invalidateAclCache(agentId: string | null = null): void {
   if (agentId === null) {
     _aclCache.clear();
+    _aclInFlight.clear();
+    for (const id of [..._aclEpoch.keys()]) {
+      _aclEpoch.set(id, (_aclEpoch.get(id) ?? 0) + 1);
+    }
+    logger.debug({ scope: "all" }, "mqtt-acl: cache invalidated");
     return;
   }
+  const hadEntry = _aclCache.has(agentId);
   _aclCache.delete(agentId);
+  _aclInFlight.delete(agentId);
+  _aclEpoch.set(agentId, (_aclEpoch.get(agentId) ?? 0) + 1);
+  logger.debug({ agentId, hadEntry }, "mqtt-acl: cache invalidated");
 }
 
 /** Best-effort DB load. Returns an empty profile if the holacracy schema is absent. */
@@ -226,9 +256,39 @@ async function getAclProfile(
   if (cached && cached.expiresAt > Date.now()) {
     return cached.profile;
   }
-  const profile = await loadAclProfile(db, companyId, agentId);
-  _aclCache.set(agentId, { profile, expiresAt: Date.now() + ACL_CACHE_TTL_MS });
-  return profile;
+  // De-dupe concurrent loads for the same agent. Without this, two ACL
+  // requests racing past an `invalidateAclCache` call each fire a SELECT;
+  // whichever finishes LAST wins the cache write, and if either captured a
+  // pre-INSERT snapshot, the stale answer is what's served until TTL.
+  const inFlight = _aclInFlight.get(agentId);
+  if (inFlight) return inFlight;
+  const epochAtStart = _aclEpoch.get(agentId) ?? 0;
+  const promise = (async () => {
+    try {
+      const profile = await loadAclProfile(db, companyId, agentId);
+      // Only write the cache if no invalidation happened during the load.
+      // If the epoch was bumped, our snapshot may pre-date a relevant
+      // commit (e.g. fresh `circle_discussions` row) and a subsequent
+      // request will trigger a fresh, post-invalidate load.
+      const epochNow = _aclEpoch.get(agentId) ?? 0;
+      if (epochNow === epochAtStart) {
+        _aclCache.set(agentId, {
+          profile,
+          expiresAt: Date.now() + ACL_CACHE_TTL_MS,
+        });
+      } else {
+        logger.debug(
+          { agentId, epochAtStart, epochNow },
+          "mqtt-acl: discarding stale profile load (cache invalidated during load)",
+        );
+      }
+      return profile;
+    } finally {
+      _aclInFlight.delete(agentId);
+    }
+  })();
+  _aclInFlight.set(agentId, promise);
+  return promise;
 }
 
 // ---------------------------------------------------------------------------
@@ -441,10 +501,23 @@ function isSubscribeAllowed(profile: AgentAclProfile, topic: string): boolean {
 
     // Phase 1.15a — discussion event topic. Subscribe permitted when the
     // agent is a participant in the open discussion identified by contextId.
-    case "discussion":
+    case "discussion": {
       // paperclip/v1/discussion/{companyId}/{contextId}
       if (segments.length !== 5) return false;
-      return profile.ownDiscussionContextIds.includes(segments[4]!);
+      const contextId = segments[4]!;
+      const allowed = profile.ownDiscussionContextIds.includes(contextId);
+      if (!allowed) {
+        logger.info(
+          {
+            agentId: profile.agentId,
+            contextId,
+            knownContextIds: profile.ownDiscussionContextIds,
+          },
+          "mqtt-acl: discussion subscribe denied — contextId not in profile",
+        );
+      }
+      return allowed;
+    }
 
     default:
       return false;
@@ -518,6 +591,10 @@ export function mqttAclRoutes(db: Db) {
       } else if (action === "all") {
         allowed = isPublishAllowed(profile, topicRaw) || isSubscribeAllowed(profile, topicRaw);
       }
+      logger.debug(
+        { agentId, action, topic: topicRaw, allowed },
+        "mqtt-acl: decision",
+      );
       res.status(200).json({ result: allowed ? "allow" : "deny" });
     } catch (err) {
       logger.warn({ err, agentId }, "mqtt-acl: profile load failed");

@@ -60,7 +60,18 @@ interface AgentMqttHandle {
   lastError?: Error;
   connectedAt?: Date;
   isFallback: boolean;
+  /**
+   * Pending subscribe retries (filter → {attempt count, timer}). When a
+   * broker SUBACK comes back with `qos >= 128` (ACL deny) or the
+   * underlying client throws, we schedule a retry instead of silently
+   * marking the filter "subscribed" — see `scheduleSubscribeRetry`.
+   */
+  retryTimers: Map<string, NodeJS.Timeout>;
+  retryAttempts: Map<string, number>;
 }
+
+/** Subscribe-retry backoff schedule. After the last entry we give up. */
+const SUBSCRIBE_RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 60_000];
 
 const _handles = new Map<string, AgentMqttHandle>();
 const _pending = new Map<string, Promise<void>>();
@@ -342,6 +353,8 @@ export async function ensureAgent(agentId: string): Promise<void> {
       consecutiveFailures: 0,
       isFallback: false,
       connectedAt: new Date(),
+      retryTimers: new Map(),
+      retryAttempts: new Map(),
     };
     _handles.set(agentId, handle);
 
@@ -405,6 +418,9 @@ export async function dropAgent(agentId: string): Promise<void> {
   const handle = _handles.get(agentId);
   if (!handle) return;
   _handles.delete(agentId);
+  for (const timer of handle.retryTimers.values()) clearTimeout(timer);
+  handle.retryTimers.clear();
+  handle.retryAttempts.clear();
   try {
     const topic = discoveryTopic(
       handle.slot.companyId,
@@ -451,15 +467,9 @@ export async function reconcileSubscriptions(agentId: string): Promise<void> {
 
   for (const filter of desired) {
     if (handle.subscriptions.has(filter)) continue;
-    try {
-      await handle.client.subscribeAsync(filter, { qos: 1 });
-      handle.subscriptions.add(filter);
-    } catch (err) {
-      logger.warn(
-        { err, agentId, filter },
-        "per-agent-client-manager: subscribe failed",
-      );
-    }
+    // A retry timer is already scheduled — let it run instead of racing.
+    if (handle.retryTimers.has(filter)) continue;
+    await trySubscribe(handle, filter, /*isRetry*/ false);
   }
   for (const filter of [...handle.subscriptions]) {
     if (desired.has(filter)) continue;
@@ -470,6 +480,109 @@ export async function reconcileSubscriptions(agentId: string): Promise<void> {
     }
     handle.subscriptions.delete(filter);
   }
+  // Filters that are no longer desired but still scheduled for retry
+  // should also be abandoned.
+  for (const [filter, timer] of handle.retryTimers) {
+    if (!desired.has(filter)) {
+      clearTimeout(timer);
+      handle.retryTimers.delete(filter);
+      handle.retryAttempts.delete(filter);
+    }
+  }
+}
+
+/**
+ * Attempt a single subscribe. On success: add to handle.subscriptions and
+ * clear any pending retry state. On broker-denied (SUBACK ≥ 128) or thrown
+ * error: schedule a backoff retry (or give up after the schedule is
+ * exhausted). Caller must verify the filter isn't already subscribed.
+ */
+async function trySubscribe(
+  handle: AgentMqttHandle,
+  filter: string,
+  isRetry: boolean,
+): Promise<void> {
+  const agentId = handle.slot.agentId;
+  const attempt = handle.retryAttempts.get(filter) ?? 0;
+  try {
+    const grants = await handle.client.subscribeAsync(filter, { qos: 1 });
+    // mqtt.js resolves subscribeAsync even on broker-side ACL deny — the
+    // SUBACK comes back with `qos >= 128` (MQTT5 reason code ≥ 128). Only
+    // mark the filter subscribed when the broker actually granted it.
+    const granted = Array.isArray(grants) ? grants : [];
+    const denied = granted.some((g) => typeof g?.qos === "number" && g.qos >= 128);
+    if (denied) {
+      logger.warn(
+        { agentId, filter, granted, attempt, isRetry },
+        "per-agent-client-manager: subscribe denied by broker (SUBACK ≥ 128)",
+      );
+      scheduleSubscribeRetry(handle, filter);
+      return;
+    }
+    handle.subscriptions.add(filter);
+    handle.retryAttempts.delete(filter);
+    const existingTimer = handle.retryTimers.get(filter);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      handle.retryTimers.delete(filter);
+    }
+    logger.info(
+      { agentId, filter, granted, attempt, isRetry },
+      isRetry
+        ? "per-agent-client-manager: subscribe succeeded on retry"
+        : "per-agent-client-manager: subscribed",
+    );
+  } catch (err) {
+    handle.consecutiveFailures = (handle.consecutiveFailures ?? 0) + 1;
+    logger.warn(
+      {
+        err,
+        agentId,
+        filter,
+        attempt,
+        isRetry,
+        consecutiveFailures: handle.consecutiveFailures,
+        reasonCode: (err as { code?: unknown })?.code ?? null,
+      },
+      "per-agent-client-manager: subscribe failed",
+    );
+    scheduleSubscribeRetry(handle, filter);
+  }
+}
+
+function scheduleSubscribeRetry(handle: AgentMqttHandle, filter: string): void {
+  const agentId = handle.slot.agentId;
+  const attempt = handle.retryAttempts.get(filter) ?? 0;
+  if (attempt >= SUBSCRIBE_RETRY_DELAYS_MS.length) {
+    logger.warn(
+      { agentId, filter, attempts: attempt },
+      "per-agent-client-manager: subscribe retries exhausted — giving up; next reconcile will re-try",
+    );
+    handle.retryAttempts.delete(filter);
+    handle.retryTimers.delete(filter);
+    return;
+  }
+  const delay = SUBSCRIBE_RETRY_DELAYS_MS[attempt]!;
+  handle.retryAttempts.set(filter, attempt + 1);
+  const existing = handle.retryTimers.get(filter);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    handle.retryTimers.delete(filter);
+    if (handle.subscriptions.has(filter)) {
+      handle.retryAttempts.delete(filter);
+      return;
+    }
+    void trySubscribe(handle, filter, /*isRetry*/ true);
+  }, delay);
+  // Don't keep the event loop alive just to retry a subscribe.
+  if (typeof (timer as { unref?: () => void }).unref === "function") {
+    (timer as { unref: () => void }).unref();
+  }
+  handle.retryTimers.set(filter, timer);
+  logger.info(
+    { agentId, filter, attempt, nextDelayMs: delay },
+    "per-agent-client-manager: subscribe retry scheduled",
+  );
 }
 
 // ---------------------------------------------------------------------------

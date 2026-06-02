@@ -8332,6 +8332,16 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           const used = perAgentRecentCount.get(row.agentId) ?? 0;
           if (used >= rateLimitPerHour) {
             skipped += 1;
+            logger.info(
+              {
+                agentId: row.agentId,
+                perceptionId: row.id,
+                topic: row.topic,
+                used,
+                limit: rateLimitPerHour,
+              },
+              "heartbeat: discussion wake skipped (rate-limited)",
+            );
             // Still mark processed so we don't keep recounting it.
             await db.execute(sql`
               UPDATE public.agent_perceptions
@@ -8364,8 +8374,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               const issueList = Array.isArray(issueRows) ? issueRows : issueRows.rows ?? [];
               resolvedIssueId = issueList[0]?.id;
             }
-          } catch {
-            // best-effort; if lookup fails the wake still fires without issueId
+          } catch (err) {
+            logger.warn(
+              { err, agentId: row.agentId, perceptionId: row.id, topic: row.topic },
+              "heartbeat: resolveIssueId for discussion perception failed",
+            );
           }
           try {
             const run = await enqueueWakeup(row.agentId, {
@@ -8385,11 +8398,34 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             if (run) {
               enqueued += 1;
               perAgentRecentCount.set(row.agentId, used + 1);
+              logger.info(
+                {
+                  agentId: row.agentId,
+                  perceptionId: row.id,
+                  runId: run.id,
+                  topic: row.topic,
+                  resolvedIssueId: resolvedIssueId ?? null,
+                },
+                "heartbeat: discussion wake enqueued",
+              );
             } else {
               skipped += 1;
+              logger.info(
+                {
+                  agentId: row.agentId,
+                  perceptionId: row.id,
+                  topic: row.topic,
+                  resolvedIssueId: resolvedIssueId ?? null,
+                },
+                "heartbeat: discussion wake suppressed (enqueueWakeup returned null)",
+              );
             }
-          } catch {
+          } catch (err) {
             skipped += 1;
+            logger.warn(
+              { err, agentId: row.agentId, perceptionId: row.id, topic: row.topic },
+              "heartbeat: enqueueWakeup for discussion perception failed",
+            );
           }
           // Stamp processed regardless to avoid retry storms.
           await db.execute(sql`
@@ -8398,8 +8434,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
              WHERE id = ${row.id}::uuid
           `);
         }
-      } catch {
-        // ignore — discussion wake is best-effort
+      } catch (err) {
+        logger.warn(
+          { err, checked, enqueued, skipped },
+          "heartbeat: wakeOnDiscussionPerceptions failed",
+        );
       }
       return { checked, enqueued, skipped };
     },

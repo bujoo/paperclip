@@ -98,9 +98,22 @@ async function queryCircleDetail(circleId: string) {
 async function createCircle(companyId: string, name: string, purpose: string | null, parentCircleId: string | null, projectId: string | null, color: string | null) {
   if (!dbCtx) throw new Error("DB not initialized");
   const id = randomUUID();
+  // If no project supplied, auto-create a root project for this circle so that
+  // circle conversations / meeting routines / directive-spawned work / tensions
+  // can be linked back to a project rather than living orphaned.
+  let resolvedProjectId = projectId;
+  if (!resolvedProjectId) {
+    const newProjectId = randomUUID();
+    const description = `Root project for the ${name} circle. Holds circle conversations, meeting routines, directive-spawned work, and untriaged tensions.`;
+    await dbCtx.execute(
+      `INSERT INTO public.projects (id, company_id, name, description) VALUES ($1, $2, $3, $4)`,
+      [newProjectId, companyId, name, description],
+    );
+    resolvedProjectId = newProjectId;
+  }
   await dbCtx.execute(
     `INSERT INTO ${tbl("circles")} (id, company_id, name, purpose, parent_circle_id, project_id, color) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [id, companyId, name, purpose, parentCircleId, projectId, color],
+    [id, companyId, name, purpose, parentCircleId, resolvedProjectId, color],
   );
   for (const def of CORE_ROLE_DEFS) {
     await dbCtx.execute(
@@ -108,7 +121,7 @@ async function createCircle(companyId: string, name: string, purpose: string | n
       [randomUUID(), id, def.name, def.purpose, def.type],
     );
   }
-  return { id, name, purpose, parentCircleId, coreRolesCreated: CORE_ROLE_DEFS.length };
+  return { id, name, purpose, parentCircleId, projectId: resolvedProjectId, coreRolesCreated: CORE_ROLE_DEFS.length };
 }
 
 /**

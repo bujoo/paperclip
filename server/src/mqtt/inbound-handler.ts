@@ -511,6 +511,7 @@ interface RecipientRow extends Record<string, unknown> {
   agentName: string;
   circleId: string;
   circleName: string;
+  projectId: string | null;
 }
 
 async function resolveLeadLinks(
@@ -519,10 +520,11 @@ async function resolveLeadLinks(
 ): Promise<RecipientRow[]> {
   const rows = (await db.execute<RecipientRow>(sql`
     SELECT
-      a.id::text   AS "agentId",
-      a.name       AS "agentName",
-      c.id::text   AS "circleId",
-      c.name       AS "circleName"
+      a.id::text          AS "agentId",
+      a.name              AS "agentName",
+      c.id::text          AS "circleId",
+      c.name              AS "circleName",
+      c.project_id::text  AS "projectId"
     FROM public.agents a
     JOIN plugin_holacracy_c5049b5dfe.role_assignments ra ON ra.agent_id = a.id
     JOIN plugin_holacracy_c5049b5dfe.roles r              ON r.id = ra.role_id
@@ -611,6 +613,7 @@ async function handleDirectiveInbound(
         kind: "next_action",
         status: "todo",
         assigneeAgentId: r.agentId,
+        projectId: r.projectId ?? undefined,
         originKind: "a2a:directive",
         originId: `${directive.kind}:${r.agentId}`,
         originFingerprint: `directive:${directive.kind}:${r.agentId}:${Date.now()}`,

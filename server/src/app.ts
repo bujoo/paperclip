@@ -317,6 +317,34 @@ export async function createApp(
       res.status(500).json({ ok: false, error: "reproject failed" });
     }
   });
+  // Phase 1.16-EMQX E11 — Force per-agent MQTT client recycle (drop + ensure
+  // each active agent). Use after role-assignment changes so each client
+  // re-loads its home circle from DB into the connect-time `slot.circleId`
+  // (without this, agents stay connected with their stale clientid, and
+  // the EMQX A2A Registry rejects their Agent Cards with `bad_clientid`).
+  api.post("/internal/mqtt/recycle-agents", async (_req, res) => {
+    try {
+      const { sql } = await import("drizzle-orm");
+      const rows = (await db.execute<{ id: string }>(
+        sql`SELECT id::text AS "id" FROM public.agents WHERE status NOT IN ('archived','terminated')`,
+      )) as unknown as { rows: Array<{ id: string }> } | Array<{ id: string }>;
+      const list = Array.isArray(rows) ? rows : rows.rows ?? [];
+      let recycled = 0;
+      for (const row of list) {
+        try {
+          await perAgentClientManager.dropAgent(row.id);
+          await perAgentClientManager.ensureAgent(row.id);
+          recycled += 1;
+        } catch (err) {
+          logger.warn({ err, agentId: row.id }, "recycle-agents: failed for agent");
+        }
+      }
+      res.status(200).json({ ok: true, attempted: list.length, recycled });
+    } catch (err) {
+      logger.warn({ err }, "POST /internal/mqtt/recycle-agents failed");
+      res.status(500).json({ ok: false, error: "recycle failed" });
+    }
+  });
   // Phase 1.11 — stats endpoint for the per-agent MQTT client manager.
   api.get("/internal/mqtt/stats", (_req, res) => {
     const host = getHostSingletonDiagnostics();

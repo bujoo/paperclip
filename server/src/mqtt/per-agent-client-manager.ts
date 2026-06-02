@@ -135,7 +135,7 @@ async function loadHomeSlot(db: Db, agentId: string): Promise<AgentSlot | null> 
       JOIN plugin_holacracy_c5049b5dfe.circles c            ON c.id = r.circle_id
       WHERE a.id = ${agentId}::uuid
         AND a.status NOT IN ('archived', 'terminated')
-      ORDER BY ra.created_at DESC NULLS LAST
+      ORDER BY ra.assigned_at DESC NULLS LAST
       LIMIT 1
     `);
     const list = Array.isArray(rows)

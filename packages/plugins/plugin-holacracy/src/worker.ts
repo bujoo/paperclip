@@ -2488,6 +2488,9 @@ interface CircleDiscussionRow {
   consulted_agent_ids: string[] | null;
   ratifier_agent_id: string | null;
   informed_agent_ids: string[] | null;
+  /** Phase 1.15h-l F3 — IDM integration ⇄ objections cycle counter.
+   *  Migration 0091 adds the column with default 0. */
+  integration_cycles_count: number;
 }
 
 const DISCUSSION_TURN_ORIGIN_KIND = "discussion:turn";
@@ -2668,6 +2671,14 @@ interface SpawnTurnArgs {
   /** When non-empty, restrict spawn to these agents only (used by
    *  reverse-priority/roundtable to spawn one at a time). */
   onlyAgents?: string[];
+  /** Phase 1.15h-l F3 — Optional override for the issue's `origin_fingerprint`.
+   *  IDM phase turns use `idm-<phase>` (and `idm-<phase>-c<n>` for
+   *  integration/objections cycles) instead of `round-N`. When omitted, falls
+   *  back to `round-{roundNumber}` so legacy callers are unaffected. */
+  fingerprintOverride?: string;
+  /** Phase 1.15h-l F3 — Optional extra prompt text appended to the issue
+   *  description, used to surface IDM phase-specific instructions. */
+  extraPrompt?: string;
 }
 
 /**
@@ -2718,7 +2729,7 @@ async function computeSpeakerOrder(
 
 async function spawnRoundTurnIssues(args: SpawnTurnArgs): Promise<string[]> {
   if (!dbCtx) throw new Error("DB not initialized");
-  const { discussion, roundNumber, digest, onlyAgents } = args;
+  const { discussion, roundNumber, digest, onlyAgents, fingerprintOverride, extraPrompt } = args;
   
   // MYA-175: Guard against empty topic payloads (race between discussion creation
   // and snapshot assembly can result in agents woken with no active discussions).
@@ -2749,7 +2760,9 @@ async function spawnRoundTurnIssues(args: SpawnTurnArgs): Promise<string[]> {
     ? discussion.prompt_for_agents
     : defaultRoundPrompt();
   const created: string[] = [];
-  const fingerprint = discussionFingerprint(roundNumber);
+  const fingerprint = fingerprintOverride && fingerprintOverride.length > 0
+    ? fingerprintOverride
+    : discussionFingerprint(roundNumber);
   const targetAgents = onlyAgents && onlyAgents.length > 0
     ? onlyAgents
     : discussion.participant_agent_ids;
@@ -2769,6 +2782,7 @@ async function spawnRoundTurnIssues(args: SpawnTurnArgs): Promise<string[]> {
       discussion.topic,
       "",
       promptText,
+      ...(extraPrompt ? ["", extraPrompt] : []),
       "",
       `(Round ${roundNumber} of ${discussion.rounds_planned} — this is your turn.)`,
       ...(digest ? ["", "## Prior rounds in this discussion", "", digest] : []),
@@ -3056,6 +3070,7 @@ async function createDiscussion(
     consulted_agent_ids: consultedAgentIds,
     ratifier_agent_id: ratifierAgentId,
     informed_agent_ids: informedAgentIds,
+    integration_cycles_count: 0,
   };
   const speakerOrder = await computeSpeakerOrder(tempForOrder);
 
@@ -3279,6 +3294,20 @@ async function advanceCircleDiscussions(): Promise<{ checked: number; advanced: 
         continue;
       }
 
+      // Phase 1.15h-l F3 — SMART discussions walk through Robertson IDM's
+      // 6 phases instead of the flat-rounds path. `advanceIdmPhase` advances
+      // at most one phase per tick and is a no-op when the current phase is
+      // already past the IDM range (which falls back to the legacy logic
+      // below). For non-SMART discussions this branch is skipped entirely.
+      if (
+        isSmartDiscussion(discussion) &&
+        (discussion.phase === "open" || IDM_DISCUSSION_PHASES.has(discussion.phase))
+      ) {
+        const moved = await advanceIdmPhase(discussion);
+        if (moved) advanced += 1;
+        continue;
+      }
+
       // Always check if a summariser exists and is done first — that's the
       // terminal transition into awaiting_commitments.
       const summariser = await dbCtx.query<{ id: string; status: string }>(
@@ -3446,6 +3475,391 @@ async function advanceOneRound(
     // status not done — wait.
     return;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 1.15h-l F3 — Robertson IDM 6-phase advancer.
+//
+// SMART discussions (those with a non-empty `success_criterion`) walk through
+// Robertson's Integrative Decision-Making phases instead of the legacy
+// flat-rounds flow. The advancer is idempotent: spawn calls are guarded by
+// `WHERE NOT EXISTS` inside `spawnRoundTurnIssues`, and phase UPDATEs use
+// `WHERE phase = <old>` so a second tick in the same scheduler interval
+// never double-advances.
+//
+// Phase machine:
+//   open                 → proposal              (when first turn issue exists)
+//   proposal             → clarifying_questions  (proposer's turn done)
+//   clarifying_questions → reactions             (all non-proposer turns done)
+//   reactions            → amend                 (all participant reaction turns done)
+//   amend                → objections            (proposer's amend turn done)
+//   objections           → integration | awaiting_commitments
+//                                                (>=1 objection vs zero)
+//   integration          → objections | awaiting_commitments
+//                                                (next cycle or cap reached)
+//   awaiting_commitments → concluded             (existing path; unchanged)
+//
+// Integration ⇄ objections is bounded by MAX_INTEGRATION_CYCLES to prevent
+// infinite ping-pong; the counter lives on `circle_discussions.integration_cycles_count`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MAX_INTEGRATION_CYCLES = 3;
+
+/** Phases that the IDM advancer manages. The advancer is a no-op for any
+ *  other `discussion.phase` value (e.g. `awaiting_commitments`, `concluded`,
+ *  `deadlocked`, or legacy `open` on non-SMART discussions). */
+const IDM_DISCUSSION_PHASES = new Set([
+  "proposal",
+  "clarifying_questions",
+  "reactions",
+  "amend",
+  "objections",
+  "integration",
+]);
+
+/** A discussion is "SMART" / IDM-track when it has at least a success
+ *  criterion. The plugin-holacracy SMART creation path always populates this;
+ *  legacy discussions don't, and they keep the flat-rounds path. */
+function isSmartDiscussion(d: CircleDiscussionRow): boolean {
+  return typeof d.success_criterion === "string" && d.success_criterion.trim().length > 0;
+}
+
+/** Resolve the proposer: prefer the explicit initiator; fall back to the
+ *  first slot in speaker_order; final fallback to the first participant. */
+function resolveProposerAgentId(d: CircleDiscussionRow): string | null {
+  if (d.initiated_by_agent_id) return d.initiated_by_agent_id;
+  if (d.speaker_order && d.speaker_order.length > 0) return d.speaker_order[0];
+  if (d.participant_agent_ids.length > 0) return d.participant_agent_ids[0];
+  return null;
+}
+
+function resolveNonProposerAgentIds(d: CircleDiscussionRow): string[] {
+  const proposer = resolveProposerAgentId(d);
+  return d.participant_agent_ids.filter((id) => id !== proposer);
+}
+
+/** Build an `origin_fingerprint` for an IDM phase turn issue. The optional
+ *  `cycle` index disambiguates repeat `objections`/`integration` rounds so
+ *  each cycle's issues are tracked independently. */
+function idmPhaseFingerprint(phase: string, cycle = 0): string {
+  return cycle === 0 ? `idm-${phase}` : `idm-${phase}-c${cycle}`;
+}
+
+/** Per-phase extra prompt surfaced on the issue description. Kept terse here;
+ *  F2 will replace these with Robertson-faithful phase-specific guidance. */
+function idmPhasePrompt(phase: string): string {
+  switch (phase) {
+    case "proposal":
+      return "## IDM Phase 1 — Proposal\n\nDraft your concrete proposal addressing the success criterion. Be specific.";
+    case "clarifying_questions":
+      return "## IDM Phase 2 — Clarifying Questions\n\nAsk ONE clarifying question about the proposal, or reply `PASS` if the proposal is already clear. No reactions or objections in this phase.";
+    case "reactions":
+      return "## IDM Phase 3 — Reactions\n\nShare your reaction to the proposal. Do not address other reactions — speak directly to the proposer.";
+    case "amend":
+      return "## IDM Phase 4 — Amend or Clarify\n\nBased on reactions, you MAY amend the proposal or clarify intent. Reply `NO CHANGE` to keep the proposal as-is.";
+    case "objections":
+      return "## IDM Phase 5 — Objections\n\nDo you see a reason adopting this proposal would cause harm or move the circle backwards? Reply `NO OBJECTION`, otherwise state the objection.";
+    case "integration":
+      return "## IDM Phase 6 — Integration\n\nIntegrate the raised objection(s) into the proposal so neither the objection nor the proposal's original tension stand. Reply `NO CHANGE` to leave the proposal unchanged.";
+    default:
+      return "";
+  }
+}
+
+/** Aggregate completion stats for a given phase fingerprint. Treats both
+ *  `done` and `cancelled` as "no longer blocking advancement". */
+async function countPhaseTurns(
+  discussionId: string,
+  fingerprint: string,
+): Promise<{ total: number; finished: number; doneIds: string[] }> {
+  if (!dbCtx) return { total: 0, finished: 0, doneIds: [] };
+  const rows = await dbCtx.query<{ id: string; status: string }>(
+    `SELECT id, status FROM public.issues
+       WHERE origin_kind = $1 AND origin_id = $2 AND origin_fingerprint = $3`,
+    [DISCUSSION_TURN_ORIGIN_KIND, discussionId, fingerprint],
+  );
+  let finished = 0;
+  const doneIds: string[] = [];
+  for (const r of rows) {
+    if (r.status === "done" || r.status === "cancelled") {
+      finished += 1;
+      if (r.status === "done") doneIds.push(r.id);
+    }
+  }
+  return { total: rows.length, finished, doneIds };
+}
+
+/** Heuristic: does an objection-phase turn body indicate an actual objection?
+ *  We treat "NO OBJECTION" (or "no-objection" / "no_objection") as the
+ *  unanimous-pass signal. Anything else is treated as raising an objection.
+ *  Empty/null content is conservatively treated as "no objection raised". */
+function turnRaisesObjection(content: string | null): boolean {
+  if (!content) return false;
+  const normalised = content.toLowerCase().replace(/[\s_-]+/g, " ").trim();
+  if (normalised.length === 0) return false;
+  // Quick allow-list of "no objection" phrasings; anything else is an objection.
+  if (normalised.startsWith("no objection")) return false;
+  if (normalised.includes("no objection")) return false;
+  return true;
+}
+
+/** Persist a phase transition; idempotent via the WHERE clause. Returns the
+ *  refreshed row if the UPDATE actually changed anything, else null. */
+async function setDiscussionPhase(
+  discussionId: string,
+  fromPhase: string,
+  toPhase: string,
+): Promise<CircleDiscussionRow | null> {
+  if (!dbCtx) return null;
+  await dbCtx.execute(
+    `UPDATE public.circle_discussions
+        SET phase = $3
+      WHERE id = $1 AND phase = $2`,
+    [discussionId, fromPhase, toPhase],
+  );
+  const refreshed = await loadDiscussion(discussionId);
+  if (!refreshed || refreshed.phase !== toPhase) return null;
+  try {
+    await publishDiscussionEvent(refreshed, {
+      kind: "discussion-idm-phase-advance",
+      fromPhase,
+      toPhase,
+    });
+  } catch {
+    /* best-effort */
+  }
+  return refreshed;
+}
+
+/**
+ * Phase 1.15h-l F3 — Walk a SMART discussion through Robertson's 6 IDM phases.
+ * Called from `advanceCircleDiscussions` for any discussion where
+ * `isSmartDiscussion(d)` is true and the current phase is one of the IDM
+ * phases (or `open` for the initial promotion).
+ *
+ * Each invocation advances at most one phase; subsequent ticks pick up the
+ * next phase. The function is idempotent — re-running it on the same tick
+ * is a no-op once the phase has already transitioned (UPDATE …
+ * WHERE phase = <old> filters that out).
+ */
+async function advanceIdmPhase(discussion: CircleDiscussionRow): Promise<boolean> {
+  if (!dbCtx) return false;
+  const proposerId = resolveProposerAgentId(discussion);
+  if (!proposerId) return false; // can't run IDM without a proposer
+  const nonProposers = resolveNonProposerAgentIds(discussion);
+
+  // open → proposal. We trust the createDiscussion path to have spawned the
+  // first round-1 turn issue (which doubles as the proposal turn for
+  // backwards-compat). If no round-1 issue exists yet, wait — the next tick
+  // will catch it. The proposal turn issue itself is also spawned under the
+  // `idm-proposal` fingerprint so the phase advancer can track it directly.
+  if (discussion.phase === "open") {
+    // Spawn the canonical proposal turn (assigned to the proposer).
+    await spawnRoundTurnIssues({
+      discussion,
+      roundNumber: 1,
+      digest: null,
+      onlyAgents: [proposerId],
+      fingerprintOverride: idmPhaseFingerprint("proposal"),
+      extraPrompt: idmPhasePrompt("proposal"),
+    });
+    const refreshed = await setDiscussionPhase(discussion.id, "open", "proposal");
+    return refreshed !== null;
+  }
+
+  if (discussion.phase === "proposal") {
+    const stats = await countPhaseTurns(discussion.id, idmPhaseFingerprint("proposal"));
+    if (stats.total === 0) {
+      // Defensive: re-spawn if the issue was deleted somehow.
+      await spawnRoundTurnIssues({
+        discussion,
+        roundNumber: 1,
+        digest: null,
+        onlyAgents: [proposerId],
+        fingerprintOverride: idmPhaseFingerprint("proposal"),
+        extraPrompt: idmPhasePrompt("proposal"),
+      });
+      return false;
+    }
+    if (stats.finished < stats.total) return false;
+    // Proposer's turn done — spawn clarifying turns for non-proposers.
+    if (nonProposers.length > 0) {
+      await spawnRoundTurnIssues({
+        discussion,
+        roundNumber: 2,
+        digest: null,
+        onlyAgents: nonProposers,
+        fingerprintOverride: idmPhaseFingerprint("clarifying_questions"),
+        extraPrompt: idmPhasePrompt("clarifying_questions"),
+      });
+    }
+    const refreshed = await setDiscussionPhase(discussion.id, "proposal", "clarifying_questions");
+    return refreshed !== null;
+  }
+
+  if (discussion.phase === "clarifying_questions") {
+    // Zero non-proposers (1-agent discussion) → skip straight to reactions.
+    if (nonProposers.length === 0) {
+      await spawnRoundTurnIssues({
+        discussion,
+        roundNumber: 3,
+        digest: null,
+        onlyAgents: discussion.participant_agent_ids,
+        fingerprintOverride: idmPhaseFingerprint("reactions"),
+        extraPrompt: idmPhasePrompt("reactions"),
+      });
+      const r = await setDiscussionPhase(discussion.id, "clarifying_questions", "reactions");
+      return r !== null;
+    }
+    const stats = await countPhaseTurns(
+      discussion.id,
+      idmPhaseFingerprint("clarifying_questions"),
+    );
+    if (stats.total < nonProposers.length || stats.finished < stats.total) return false;
+    // All clarifying turns done — spawn reactions for all participants.
+    await spawnRoundTurnIssues({
+      discussion,
+      roundNumber: 3,
+      digest: null,
+      onlyAgents: discussion.participant_agent_ids,
+      fingerprintOverride: idmPhaseFingerprint("reactions"),
+      extraPrompt: idmPhasePrompt("reactions"),
+    });
+    const refreshed = await setDiscussionPhase(
+      discussion.id,
+      "clarifying_questions",
+      "reactions",
+    );
+    return refreshed !== null;
+  }
+
+  if (discussion.phase === "reactions") {
+    const stats = await countPhaseTurns(discussion.id, idmPhaseFingerprint("reactions"));
+    if (
+      stats.total < discussion.participant_agent_ids.length ||
+      stats.finished < stats.total
+    ) {
+      return false;
+    }
+    // Reactions done — spawn the proposer's amend turn.
+    await spawnRoundTurnIssues({
+      discussion,
+      roundNumber: 4,
+      digest: null,
+      onlyAgents: [proposerId],
+      fingerprintOverride: idmPhaseFingerprint("amend"),
+      extraPrompt: idmPhasePrompt("amend"),
+    });
+    const refreshed = await setDiscussionPhase(discussion.id, "reactions", "amend");
+    return refreshed !== null;
+  }
+
+  if (discussion.phase === "amend") {
+    const stats = await countPhaseTurns(discussion.id, idmPhaseFingerprint("amend"));
+    if (stats.total === 0 || stats.finished < stats.total) return false;
+    // Amend done — spawn objections turns for non-proposers (cycle 0).
+    const cycle = discussion.integration_cycles_count; // first time: 0
+    if (nonProposers.length > 0) {
+      await spawnRoundTurnIssues({
+        discussion,
+        roundNumber: 5,
+        digest: null,
+        onlyAgents: nonProposers,
+        fingerprintOverride: idmPhaseFingerprint("objections", cycle),
+        extraPrompt: idmPhasePrompt("objections"),
+      });
+    }
+    const refreshed = await setDiscussionPhase(discussion.id, "amend", "objections");
+    return refreshed !== null;
+  }
+
+  if (discussion.phase === "objections") {
+    const cycle = discussion.integration_cycles_count;
+    const fingerprint = idmPhaseFingerprint("objections", cycle);
+    // 1-agent edge case: no non-proposers means no objection turns to wait on.
+    if (nonProposers.length === 0) {
+      await setDiscussionPhase(discussion.id, "objections", "awaiting_commitments");
+      return true;
+    }
+    const stats = await countPhaseTurns(discussion.id, fingerprint);
+    if (stats.total < nonProposers.length || stats.finished < stats.total) return false;
+    // Test for objections: scan each done turn's content + any commit signals.
+    let objectionCount = 0;
+    for (const issueId of stats.doneIds) {
+      const content = await readTurnContent(issueId);
+      if (turnRaisesObjection(content)) objectionCount += 1;
+    }
+    if (objectionCount === 0) {
+      // Also check commit-signal objections (defensive — commits typically
+      // only arrive in awaiting_commitments, but the spec allows either path).
+      const commits = await dbCtx.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+           FROM public.discussion_commitments
+          WHERE discussion_id = $1 AND signal IN ('support-with-objection', 'block')`,
+        [discussion.id],
+      );
+      if ((commits[0]?.count ?? 0) > 0) objectionCount = commits[0].count;
+    }
+    if (objectionCount === 0) {
+      const refreshed = await setDiscussionPhase(
+        discussion.id,
+        "objections",
+        "awaiting_commitments",
+      );
+      return refreshed !== null;
+    }
+    // ≥1 objection — spawn the proposer's integration turn for this cycle.
+    await spawnRoundTurnIssues({
+      discussion,
+      roundNumber: 6,
+      digest: null,
+      onlyAgents: [proposerId],
+      fingerprintOverride: idmPhaseFingerprint("integration", cycle),
+      extraPrompt: idmPhasePrompt("integration"),
+    });
+    const refreshed = await setDiscussionPhase(discussion.id, "objections", "integration");
+    return refreshed !== null;
+  }
+
+  if (discussion.phase === "integration") {
+    const cycle = discussion.integration_cycles_count;
+    const fingerprint = idmPhaseFingerprint("integration", cycle);
+    const stats = await countPhaseTurns(discussion.id, fingerprint);
+    if (stats.total === 0 || stats.finished < stats.total) return false;
+    // Integration turn done — increment cycle counter, then either re-test
+    // objections (spawn next cycle's objection turns) or force-promote if
+    // we've hit MAX_INTEGRATION_CYCLES.
+    const nextCycle = cycle + 1;
+    await dbCtx.execute(
+      `UPDATE public.circle_discussions
+          SET integration_cycles_count = $2
+        WHERE id = $1 AND integration_cycles_count = $3`,
+      [discussion.id, nextCycle, cycle],
+    );
+    if (nextCycle >= MAX_INTEGRATION_CYCLES) {
+      const refreshed = await setDiscussionPhase(
+        discussion.id,
+        "integration",
+        "awaiting_commitments",
+      );
+      return refreshed !== null;
+    }
+    // Re-spawn objection turns for the new cycle.
+    if (nonProposers.length > 0) {
+      await spawnRoundTurnIssues({
+        discussion,
+        roundNumber: 5,
+        digest: null,
+        onlyAgents: nonProposers,
+        fingerprintOverride: idmPhaseFingerprint("objections", nextCycle),
+        extraPrompt: idmPhasePrompt("objections"),
+      });
+    }
+    const refreshed = await setDiscussionPhase(discussion.id, "integration", "objections");
+    return refreshed !== null;
+  }
+
+  return false;
 }
 
 /**

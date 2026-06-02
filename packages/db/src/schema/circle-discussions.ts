@@ -63,7 +63,21 @@ export const circleDiscussions = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::uuid[]`),
-    /** Phase 1.15e — 'open' | 'awaiting_commitments' | 'concluded'. */
+    /** Phase 1.15e — discussion lifecycle phase.
+     *  Phase 1.15h-l F1 — Extended to include Robertson IDM's 6 governance
+     *  phases so the F3 advancer can transition through them. Drizzle does
+     *  not mirror CHECK constraints, so the authoritative allow-list lives
+     *  in migration 0090_idm_phases.sql. Allowed values (10):
+     *    - 'open'                  — legacy / pre-IDM open state
+     *    - 'proposal'              — IDM phase 1: proposer drafts proposal
+     *    - 'clarifying_questions'  — IDM phase 2: Q&A, no reactions
+     *    - 'reactions'             — IDM phase 3: round-robin reactions
+     *    - 'amend'                 — IDM phase 4: proposer may amend
+     *    - 'objections'            — IDM phase 5: test objections
+     *    - 'integration'           — IDM phase 6: integrate objections
+     *    - 'awaiting_commitments'  — post-concl: collect agent commitments
+     *    - 'concluded'             — done, conclusion + kind populated
+     *    - 'deadlocked'            — stall-healer gave up, escalated */
     phase: text("phase").notNull().default("open"),
     /** Fraction (0..1) of participants who must signal support to conclude. */
     requiredCommitmentThreshold: real("required_commitment_threshold")
@@ -101,6 +115,14 @@ export const circleDiscussions = pgTable(
     informedAgentIds: uuid("informed_agent_ids")
       .array()
       .default(sql`'{}'::uuid[]`),
+    /** Phase 1.15h-l F3 — Count of times the IDM phase advancer has cycled
+     *  through integration → objections for this discussion. Bounded by
+     *  MAX_INTEGRATION_CYCLES (worker.ts, currently 3) before the advancer
+     *  force-promotes the discussion to `awaiting_commitments` to prevent
+     *  an infinite objection-integration ping-pong. */
+    integrationCyclesCount: integer("integration_cycles_count")
+      .notNull()
+      .default(0),
   },
   (table) => ({
     circleStatusIdx: index("circle_discussions_circle_status_idx").on(

@@ -5784,6 +5784,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                     circle_id: string | null;
                     speaker_order: unknown;
                     current_speaker_idx: number | null;
+                    phase: string | null;
                     // Phase 1.15h-i #2 — Grove pre-flight (HOM ch. 5).
                     decision_owner_agent_id: string | null;
                     consulted_agent_ids: unknown;
@@ -5803,6 +5804,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                            d.circle_id::text AS circle_id,
                            d.speaker_order,
                            d.current_speaker_idx,
+                           d.phase,
                            d.decision_owner_agent_id::text AS decision_owner_agent_id,
                            d.consulted_agent_ids,
                            d.ratifier_agent_id::text AS ratifier_agent_id,
@@ -5838,6 +5840,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                     circle_id: string | null;
                     speaker_order: unknown;
                     current_speaker_idx: number | null;
+                    phase: string | null;
                     decision_owner_agent_id: string | null;
                     consulted_agent_ids: unknown;
                     ratifier_agent_id: string | null;
@@ -5891,6 +5894,17 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                       informedAgentIds: toStringArray(smart.informed_agent_ids),
                       informedNames: toStringArray(smart.informed_names),
                     };
+
+                    // Phase 1.15h-l F2 — surface the IDM phase to the wrapper
+                    // so the discussion preamble can prepend a phase-specific
+                    // doctrine block (proposal / clarifying_questions /
+                    // reactions / amend / objections / integration). Non-IDM
+                    // phase values ('open', 'awaiting_commitments', etc.) are
+                    // passed through verbatim; the wrapper ignores unknown
+                    // phases so existing behaviour is preserved.
+                    if (typeof smart.phase === "string" && smart.phase.trim().length > 0) {
+                      runtimeConfig.discussionPhase = smart.phase.trim();
+                    }
 
                     // Phase 1.15h-h4 — flag whether THIS agent is the current
                     // speaker, so the preamble can switch from "voice your view"

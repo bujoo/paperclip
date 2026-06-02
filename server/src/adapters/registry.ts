@@ -416,6 +416,15 @@ const hermesLocalAdapter: ServerAdapterModule = {
         ? (runtimeConfigForHermes.discussionTurnKind as string)
         : "";
     const isSummaryTurn = discussionTurnKind === "discussion:summary";
+    // Phase 1.15h-l F2 — IDM phase from circle_discussions.phase. Only the 6
+    // IDM phases (proposal / clarifying_questions / reactions / amend /
+    // objections / integration) get a phase-specific preamble block;
+    // other values ("open", "awaiting_commitments", "concluded",
+    // "deadlocked") fall through and preserve existing behaviour.
+    const discussionPhase =
+      isDiscussionTurn && typeof runtimeConfigForHermes.discussionPhase === "string"
+        ? (runtimeConfigForHermes.discussionPhase as string).toLowerCase()
+        : "";
 
     const expectedKindLabel =
       smart && typeof smart.expectedOutputKind === "string" && smart.expectedOutputKind.trim().length > 0
@@ -579,6 +588,61 @@ const hermesLocalAdapter: ServerAdapterModule = {
       }
     }
 
+    // Phase 1.15h-l F2 — IDM phase-specific doctrine blocks (Robertson,
+    // Holacracy ch. 3 + 4). Prepended ABOVE the role block so the agent sees
+    // WHAT PHASE this turn is in BEFORE it sees WHAT THEIR ROLE asks for.
+    // Skipped entirely for non-IDM phases ("open", "awaiting_commitments",
+    // etc.) to preserve the existing behaviour for legacy / non-governance
+    // discussions.
+    const proposalBlock = [
+      "Phase: PROPOSAL. You are presenting your tension as a concrete change to roles/policies/process. State the proposal in 1-2 sentences. Cite the tension. Do NOT yet defend or elaborate — that comes in reactions if needed.",
+    ].join("\n");
+    const clarifyingQuestionsBlock = [
+      "Phase: CLARIFYING QUESTIONS. ONLY questions are allowed — no opinions, no reactions yet. If you don't have a clarifying question, output 'PASS' on one line. Questions go to the proposer. The proposer answers; nobody else.",
+    ].join("\n");
+    const reactionsBlock = [
+      "Phase: REACTIONS. Voice your reaction in 1-2 paragraphs. No cross-talk: react to the PROPOSAL, not to other reactions. The proposer listens silently — they do NOT respond to your reaction in this phase.",
+    ].join("\n");
+    const amendBlock = [
+      "Phase: AMEND OR CLARIFY. If you are the proposer, decide whether to revise the proposal based on what you heard in reactions. Output either the revised proposal text OR 'NO CHANGE' on one line.",
+    ].join("\n");
+    const objectionsBlock = [
+      "Phase: OBJECTIONS. Each participant: do you have a VALID objection? Robertson's 3 criteria — ALL must be true:",
+      " 1. Proposal causes NEW harm to the circle (not current-state harm)",
+      " 2. Harm FOLLOWS from the proposal text (not from speculation)",
+      " 3. Harm is based on CURRENT knowledge or near-term forecast",
+      "If all 3 true: state the objection. If any fails: output 'NO OBJECTION'. Invalid objections auto-downgrade to support-with-objection.",
+    ].join("\n");
+    const integrationBlock = [
+      "Phase: INTEGRATION. If you are the proposer or the objector: work the proposal together until the objection is integrated (modified so the harm no longer follows). Output the integrated proposal text. Other participants stay silent.",
+    ].join("\n");
+
+    let phaseBlock = "";
+    if (isDiscussionTurn) {
+      switch (discussionPhase) {
+        case "proposal":
+          phaseBlock = proposalBlock;
+          break;
+        case "clarifying_questions":
+          phaseBlock = clarifyingQuestionsBlock;
+          break;
+        case "reactions":
+          phaseBlock = reactionsBlock;
+          break;
+        case "amend":
+          phaseBlock = amendBlock;
+          break;
+        case "objections":
+          phaseBlock = objectionsBlock;
+          break;
+        case "integration":
+          phaseBlock = integrationBlock;
+          break;
+        default:
+          phaseBlock = "";
+      }
+    }
+
     const httpBridgeLedger = [
       "You can ESCALATE via HTTP. Paperclip API base is $PAPERCLIP_API_BASE (env var). Endpoints:",
       "- POST {base}/api/holacracy/tensions  body { circleId, title, body, severity } — raise a tension",
@@ -594,6 +658,7 @@ const hermesLocalAdapter: ServerAdapterModule = {
     const discussionPreamble = isDiscussionTurn
       ? [
           "You are in a Holacracy team discussion (reactions round). This run is your turn.",
+          ...(phaseBlock ? ["", phaseBlock] : []),
           "",
           roleJobBlock,
           ...(smartBlock ? ["", smartBlock] : []),

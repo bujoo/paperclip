@@ -996,5 +996,184 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
           { body: { companyId: client.resolveCompanyId(companyId) } },
         ),
     ),
+
+    // E8 — A2A-over-MQTT peer-messaging tools. Each posts semantic args to
+    // /api/internal/a2a/{publish,request}; the server builds the topic via
+    // the adapter's topic builders and publishes through the caller's
+    // per-agent MQTT client. Broker ACL enforces topic-level authorisation.
+
+    makeTool(
+      "a2aSendTask",
+      "Send a directed A2A task to a peer agent over MQTT. Publishes on the peer's $a2a/v1/request/{org}/{unit}/{toAgentId} topic with MQTT v5 response-topic + correlation-data, then awaits the reply on the caller's $a2a/v1/reply/.../{taskId} (60s default timeout). Use when you need a specific peer's input — directed, two-way.",
+      z.object({
+        toAgentId: z.string().uuid(),
+        text: z.string().min(1),
+        companyId: companyIdOptional,
+        contextId: z.string().optional(),
+        timeoutMs: z.number().int().min(1_000).max(600_000).optional(),
+      }),
+      async ({ toAgentId, text, companyId, contextId, timeoutMs }) =>
+        client.requestJson("POST", "/internal/a2a/request", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            kind: "agent",
+            toAgentId,
+            payload: { text },
+            ...(contextId ? { contextId } : {}),
+            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+          },
+        }),
+    ),
+
+    makeTool(
+      "a2aBroadcastEvent",
+      "Publish a fire-and-forget event on your own $a2a/v1/event/{org}/{unit}/{self} topic. Anyone subscribed to your circle's event wildcard receives a copy. Use for general announcements where no specific peer is the target.",
+      z.object({
+        kind: z.string().min(1),
+        body: z.unknown(),
+        companyId: companyIdOptional,
+      }),
+      async ({ kind, body, companyId }) =>
+        client.requestJson("POST", "/internal/a2a/publish", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            kind: "event-self",
+            payload: { kind, body },
+          },
+        }),
+    ),
+
+    makeTool(
+      "a2aBroadcastToCircle",
+      "Publish a fire-and-forget event scoped to a specific circle (your own or another you belong to). The topic is $a2a/v1/event/{org}/{circleId}/{self} — subscribers to that circle's event wildcard receive it.",
+      z.object({
+        circleId: z.string().uuid(),
+        kind: z.string().min(1),
+        body: z.unknown(),
+        companyId: companyIdOptional,
+      }),
+      async ({ circleId, kind, body, companyId }) =>
+        client.requestJson("POST", "/internal/a2a/publish", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            kind: "event-circle",
+            circleId,
+            payload: { kind, body },
+          },
+        }),
+    ),
+
+    makeTool(
+      "a2aBroadcastToRole",
+      "Publish a fire-and-forget event addressed to every filler of a named role in a circle. Useful when the message is role-relevant but you don't care which specific filler reads it first. Receivers all get a copy (not round-robin).",
+      z.object({
+        circleId: z.string().uuid(),
+        roleId: z.string().uuid(),
+        kind: z.string().min(1),
+        body: z.unknown(),
+        companyId: companyIdOptional,
+      }),
+      async ({ circleId, roleId, kind, body, companyId }) =>
+        client.requestJson("POST", "/internal/a2a/publish", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            kind: "role-broadcast",
+            circleId,
+            roleId,
+            payload: { kind, body },
+          },
+        }),
+    ),
+
+    makeTool(
+      "a2aAskRolePool",
+      "Send a task addressed to a role pool — the broker round-robins to exactly ONE filler of the role via shared subscription. Use when any qualified filler can answer; you don't care which.",
+      z.object({
+        circleId: z.string().uuid(),
+        roleId: z.string().uuid(),
+        text: z.string().min(1),
+        companyId: companyIdOptional,
+        contextId: z.string().optional(),
+        timeoutMs: z.number().int().min(1_000).max(600_000).optional(),
+      }),
+      async ({ circleId, roleId, text, companyId, contextId, timeoutMs }) =>
+        client.requestJson("POST", "/internal/a2a/request", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            kind: "role-pool",
+            circleId,
+            roleId,
+            payload: { text },
+            ...(contextId ? { contextId } : {}),
+            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+          },
+        }),
+    ),
+
+    makeTool(
+      "a2aAskSkill",
+      "Send a task addressed to a skill pool. Cross-circle by design — the broker round-robins to one agent in the company whose accountability slugifies to the given skill. Use when the task is skill-defined (e.g. 'docs-update', 'data-analysis').",
+      z.object({
+        skill: z.string().min(1),
+        text: z.string().min(1),
+        companyId: companyIdOptional,
+        contextId: z.string().optional(),
+        timeoutMs: z.number().int().min(1_000).max(600_000).optional(),
+      }),
+      async ({ skill, text, companyId, contextId, timeoutMs }) =>
+        client.requestJson("POST", "/internal/a2a/request", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            kind: "skill-pool",
+            skill,
+            payload: { text },
+            ...(contextId ? { contextId } : {}),
+            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+          },
+        }),
+    ),
+
+    makeTool(
+      "a2aBroadcastToSkill",
+      "Publish a fire-and-forget broadcast to every agent in the company whose accountability matches the given skill (not round-robin). Cross-circle.",
+      z.object({
+        skill: z.string().min(1),
+        kind: z.string().min(1),
+        body: z.unknown(),
+        companyId: companyIdOptional,
+      }),
+      async ({ skill, kind, body, companyId }) =>
+        client.requestJson("POST", "/internal/a2a/publish", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            kind: "skill-broadcast",
+            skill,
+            payload: { kind, body },
+          },
+        }),
+    ),
+
+    makeTool(
+      "a2aDiscoverAgents",
+      "Query the EMQX A2A Registry for live agents. Returns Agent Cards. Optional filters: org_id (companyId), unit_id (circleId), agent_id, skill slug. Use before a2aSendTask when you don't know the target agent id, or to enumerate skill-holders.",
+      z.object({
+        orgId: z.string().optional(),
+        unitId: z.string().optional(),
+        agentId: z.string().optional(),
+        skill: z.string().optional(),
+      }),
+      async ({ orgId, unitId, agentId, skill }) => {
+        const params = new URLSearchParams();
+        if (orgId) params.set("org_id", orgId);
+        if (unitId) params.set("unit_id", unitId);
+        if (agentId) params.set("agent_id", agentId);
+        if (skill) params.set("skill", skill);
+        const qs = params.toString();
+        return client.requestJson(
+          "GET",
+          `/internal/a2a/agents${qs ? `?${qs}` : ""}`,
+        );
+      },
+    ),
   ];
 }

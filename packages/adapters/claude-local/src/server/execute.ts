@@ -224,9 +224,17 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     env.PAPERCLIP_RUNTIME_PRIMARY_URL = runtimePrimaryUrl;
   }
   const targetPaperclipApiUrl = adapterExecutionTargetPaperclipApiUrl(executionTarget);
-  if (targetPaperclipApiUrl) {
-    env.PAPERCLIP_API_URL = targetPaperclipApiUrl;
-  }
+  // For LOCAL execution `adapterExecutionTargetPaperclipApiUrl` returns null
+  // (it only returns a URL for remote SSH targets). Without PAPERCLIP_API_URL
+  // the spawned MCP server (`packages/mcp-server`) sees no API base and every
+  // tool call returns `{"error":"fetch failed"}` — agents then report
+  // "API connectivity blocked" and can't escalate. Fall back to the local
+  // host:port. Mirrors the same pattern used for PAPERCLIP_API_BASE in
+  // `server/src/adapters/registry.ts` (bedrock-gateway hermes path).
+  const localApiFallback =
+    process.env.PAPERCLIP_PUBLIC_URL?.replace(/\/+$/, "") ??
+    `http://127.0.0.1:${process.env.PORT || "3100"}`;
+  env.PAPERCLIP_API_URL = targetPaperclipApiUrl ?? localApiFallback;
 
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;

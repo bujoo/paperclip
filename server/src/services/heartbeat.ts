@@ -8298,7 +8298,12 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       let checked = 0;
       let enqueued = 0;
       let skipped = 0;
-      const rateLimitPerHour = 4;
+      // Per-agent rate limit. 4/hour was the original defensive value when
+      // discussion-wakes were spuriously firing; with the Phase A-D MQTT
+      // fixes + per-role observer suppression the wakes are well-scoped.
+      // Raised to 20/hour (= one per 3 min) so live testing of multi-round
+      // SMART discussions isn't bottlenecked by the limit.
+      const rateLimitPerHour = 20;
       try {
         interface Row extends Record<string, unknown> {
           id: string;

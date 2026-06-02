@@ -923,5 +923,78 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
           { body: { companyId: client.resolveCompanyId(companyId), ...body } },
         ),
     ),
+
+    // T7-lift — high-value tools previously reachable only via the plugin API
+    // routes (not MCP). Now bedrock_gateway agents can call them directly.
+    makeTool(
+      "holacracyGetRole",
+      "Get a Holacracy role's details: purpose, accountabilities, domains, and the agent(s) filling it. Counterpart to holacracyGetCircle for individual-role inspection.",
+      z.object({
+        roleId: z.string().min(1),
+        circleId: z.string().min(1),
+        companyId: companyIdOptional,
+      }),
+      async ({ circleId, roleId, companyId }) =>
+        client.requestJson(
+          "GET",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/roles/${encodeURIComponent(roleId)}?companyId=${encodeURIComponent(client.resolveCompanyId(companyId))}`,
+        ),
+    ),
+
+    makeTool(
+      "holacracyListAgreements",
+      "List agreements (afspraken) for a circle — intra-circle and cross-circle agreements where this circle holds a party role.",
+      z.object({
+        circleId: z.string().min(1),
+        companyId: companyIdOptional,
+      }),
+      async ({ circleId, companyId }) =>
+        client.requestJson(
+          "GET",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(circleId)}/agreements?companyId=${encodeURIComponent(client.resolveCompanyId(companyId))}`,
+        ),
+    ),
+
+    makeTool(
+      "holacracyProposeAgreement",
+      "Propose a new agreement between roles in the form 'If condition then commitment'. scope: 'intra_circle' (parties all in primaryCircleId) or 'cross_circle' (parties span circles). Status starts as 'proposed'.",
+      z.object({
+        companyId: companyIdOptional,
+        scope: z.enum(["intra_circle", "cross_circle"]),
+        primaryCircleId: z.string().min(1),
+        parties: z.array(
+          z.object({
+            roleId: z.string().min(1),
+            circleId: z.string().min(1),
+          }),
+        ).min(1),
+        title: z.string().min(1),
+        condition: z.string().optional(),
+        commitment: z.string().min(1),
+        expiresAt: z.string().optional(),
+        proposedViaTensionId: z.string().optional(),
+      }),
+      async ({ companyId, primaryCircleId, ...body }) =>
+        client.requestJson(
+          "POST",
+          `/plugins/paperclipai.plugin-holacracy/api/circles/${encodeURIComponent(primaryCircleId)}/agreements`,
+          { body: { companyId: client.resolveCompanyId(companyId), primaryCircleId, ...body } },
+        ),
+    ),
+
+    makeTool(
+      "holacracyActivateAgreement",
+      "Move an agreement from 'proposed' to 'active'. Stamps activated_at.",
+      z.object({
+        agreementId: z.string().min(1),
+        companyId: companyIdOptional,
+      }),
+      async ({ agreementId, companyId }) =>
+        client.requestJson(
+          "POST",
+          `/plugins/paperclipai.plugin-holacracy/api/agreements/${encodeURIComponent(agreementId)}/activate`,
+          { body: { companyId: client.resolveCompanyId(companyId) } },
+        ),
+    ),
   ];
 }

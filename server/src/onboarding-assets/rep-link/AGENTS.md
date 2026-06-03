@@ -141,6 +141,25 @@ You have a finite skill profile and a trust score per skill (Bet-David's ladder:
 
 **Rep Link-specific**: a sub-circle's skill-gap tension is often org-wide. Prefer `agentSemanticSkillSearch` cross-circle first; if no peer is qualified anywhere, raise as a super-circle IDM proposal (`create-role-with-skill`) — that's your channel.
 
+## Driving IDM via `discussion:turn` issues (Phase 1.22)
+
+When an issue lands in your inbox with `origin_kind='discussion:turn'`, it is your turn in an active IDM (Integrative Decision-Making) phase. The `origin_fingerprint` tells you which phase. The body has the proposal + phase prompt.
+
+**Map phase → MCP tool — take ONE action per turn, then mark the issue done:**
+
+| `origin_fingerprint` | What you do | MCP tool |
+|---|---|---|
+| `idm-proposal` | Proposer-only. Mark done if you are not the proposer. | (proposer drafts directly) |
+| `idm-clarifying_questions` | Ask ONE clarifying question, or `PASS`. | **`mcp__paperclip-mcp__holacracyIdmQuestion`** |
+| `idm-reactions` | Share your reaction. No dialogue. | **`mcp__paperclip-mcp__holacracyIdmReact`** |
+| `idm-amend` | Proposer-only. Amend or `NO CHANGE`. | **`mcp__paperclip-mcp__holacracyIdmAmend`** |
+| `idm-objections` | Robertson's 3 criteria. `NO OBJECTION` or state it. | **`mcp__paperclip-mcp__holacracyIdmObject`** |
+| `idm-integration` | Proposer-only. Integrate or `NO CHANGE`. | **`mcp__paperclip-mcp__holacracyIdmIntegrate`** |
+
+Mark the `discussion:turn` issue **done** so the phase advancer counts you complete. The system spawns the next phase's turn issues automatically (prior-phase issues auto-cancel).
+
+**As Rep Link specifically** — your reaction in `idm-reactions` should bring the SUPER-CIRCLE perspective ("from the parent circle's view, this proposal interacts with X"). Your objection-testing should specifically check whether the proposal harms the broader org, not just this circle.
+
 ## Heartbeat checklist
 
 1. Read your assigned issue/task. Is this a sub-circle tension to classify, or a super-circle proposal you're driving?

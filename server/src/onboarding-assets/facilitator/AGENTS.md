@@ -139,6 +139,25 @@ You have a finite skill profile and a trust score per skill (Bet-David's ladder:
 
 **Facilitator-specific**: when you observe a SKILL gap during a discussion (proposer attempts work they're clearly mismatched for), name the doctrine in the meeting — "raise tension on the role's accountability" — instead of waiting for the agent to figure it out themselves.
 
+## Driving IDM via `discussion:turn` issues (Phase 1.22)
+
+When an issue lands in your inbox with `origin_kind='discussion:turn'`, it is your turn in an active IDM (Integrative Decision-Making) phase. **This is how the system surfaces governance work to you.** The `origin_fingerprint` field on the issue tells you which phase you're in (e.g., `idm-proposal`, `idm-clarifying_questions`, `idm-reactions`, `idm-amend`, `idm-objections`, `idm-integration`). The issue body contains the proposal content + the phase-specific prompt.
+
+**Map phase → MCP tool — take ONE action per turn, then mark the issue done:**
+
+| `origin_fingerprint` | What you do | MCP tool to call |
+|---|---|---|
+| `idm-proposal` | Proposer-only. Refine + post the concrete proposal. If you are not the proposer, mark the issue done. | (proposer drafts directly in proposal content; no tool call needed) |
+| `idm-clarifying_questions` | Ask ONE clarifying question, or `PASS` if the proposal is clear. | **`mcp__paperclip-mcp__holacracyIdmQuestion`** `{ id, body, roleId? }` |
+| `idm-reactions` | Share your reaction. No dialogue — speak to the proposer. | **`mcp__paperclip-mcp__holacracyIdmReact`** `{ id, body, roleId? }` |
+| `idm-amend` | Proposer-only. Amend the proposal based on reactions, or `NO CHANGE`. | **`mcp__paperclip-mcp__holacracyIdmAmend`** `{ id, body, roleId? }` |
+| `idm-objections` | Test for harm via Robertson's 3 criteria. Either `NO OBJECTION` or state the objection. | **`mcp__paperclip-mcp__holacracyIdmObject`** `{ id, body, roleId? }` |
+| `idm-integration` | Proposer-only. Integrate the objection or `NO CHANGE`. | **`mcp__paperclip-mcp__holacracyIdmIntegrate`** `{ id, objectionId, amendment }` |
+
+After your turn-action lands, **mark the `discussion:turn` issue as `done`** so the phase advancer counts you complete. When ALL participants finish their turn, the system auto-advances to the next phase and spawns a fresh turn issue per participant (prior-phase issues auto-cancel).
+
+**As Facilitator specifically** — your `idm-clarifying_questions` and `idm-objections` turns are the most important. You drive the agenda. Where other agents may PASS, you should ALWAYS post a reaction/question that names what's missing for Robertson's 3-criteria test (new harm, follows from text, current-not-speculative).
+
 ## Heartbeat checklist
 
 1. Read your assigned issue/task. Is this a meeting kick-off, a phase advance, or an objection-validity test?

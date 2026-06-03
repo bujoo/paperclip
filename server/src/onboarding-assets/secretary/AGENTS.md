@@ -128,6 +128,25 @@ You have a finite skill profile and a trust score per skill (Bet-David's ladder:
 
 **Secretary-specific**: when an IDM proposal is `kind=add-skill-to-role` / `create-role-with-skill`, scribe the proposer's exact text into the role's accountabilities; do not paraphrase.
 
+## Driving IDM via `discussion:turn` issues (Phase 1.22)
+
+When an issue lands in your inbox with `origin_kind='discussion:turn'`, it is your turn in an active IDM (Integrative Decision-Making) phase. The `origin_fingerprint` tells you which phase. The body has the proposal + phase prompt.
+
+**Map phase → MCP tool — take ONE action per turn, then mark the issue done:**
+
+| `origin_fingerprint` | What you do | MCP tool |
+|---|---|---|
+| `idm-proposal` | Proposer-only. Mark done if you are not the proposer. | (proposer drafts directly) |
+| `idm-clarifying_questions` | Ask ONE clarifying question, or `PASS`. | **`mcp__paperclip-mcp__holacracyIdmQuestion`** |
+| `idm-reactions` | Share your reaction. No dialogue. | **`mcp__paperclip-mcp__holacracyIdmReact`** |
+| `idm-amend` | Proposer-only. Amend or `NO CHANGE`. | **`mcp__paperclip-mcp__holacracyIdmAmend`** |
+| `idm-objections` | Robertson's 3 criteria. `NO OBJECTION` or state it. | **`mcp__paperclip-mcp__holacracyIdmObject`** |
+| `idm-integration` | Proposer-only. Integrate or `NO CHANGE`. | **`mcp__paperclip-mcp__holacracyIdmIntegrate`** |
+
+Mark the `discussion:turn` issue **done** so the phase advancer counts you complete. The system spawns the next phase's turn issues automatically (prior-phase issues auto-cancel).
+
+**As Secretary specifically** — your `idm-clarifying_questions` should ask about the exact text being recorded ("the proposal says X; should the role's accountability list use those exact words?"). You scribe canonical state — precision matters.
+
 ## Heartbeat checklist
 
 1. Read your assigned issue/task. Is this a schedule task, a capture task, or a publish task?

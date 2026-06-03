@@ -910,7 +910,123 @@ async function idmPropose(
   );
   const created = await loadIdm(id);
   if (!created) throw new Error("Failed to load created IDM row");
+
+  // Phase 1.22 D1 — bridge the IDM into the agent inbox surface by auto-opening
+  // a governance discussion + spawning per-agent turn issues for phase 'proposal'.
+  // Without this, the IDM lives in idm_approvals invisibly. Agents work from
+  // public.issues — surfacing the IDM as a `discussion:turn` issue is what makes
+  // it actionable. Idempotent on existing discussion (don't double-fire).
+  try {
+    await openGovernanceDiscussionForIdm(created, params).catch((err) => {
+      console.warn(
+        `[holacracy] D1: discussion+turn spawn failed for idm ${id}: ${(err as Error).message}`,
+      );
+    });
+  } catch (err) {
+    console.warn(
+      `[holacracy] D1: bridge-to-issue threw (non-fatal): ${(err as Error).message}`,
+    );
+  }
+
   return { idm: created, approvalId: approval.id };
+}
+
+/**
+ * Phase 1.22 D1 — Open a governance discussion linked to a freshly-created
+ * IDM and spawn proposal-phase turn issues for every role-holder in the
+ * circle. Idempotent: returns the existing discussion if already linked.
+ */
+async function openGovernanceDiscussionForIdm(
+  idm: IdmApprovalRow,
+  params: { companyId: string; circleId: string; tensionId?: string },
+): Promise<{ discussionId: string; issueIds: string[] }> {
+  if (!dbCtx) throw new Error("DB not initialized");
+
+  // Idempotency: if a discussion is already linked to this IDM, no-op.
+  const existing = await dbCtx.query<{ id: string }>(
+    `SELECT id FROM public.circle_discussions WHERE idm_approval_id = $1 LIMIT 1`,
+    [idm.id],
+  );
+  if (existing.length > 0) {
+    return { discussionId: existing[0].id, issueIds: [] };
+  }
+
+  // Participants = every role-holder in the circle. Holacracy doctrine: the
+  // circle decides via IDM; the right participant set is every filled role.
+  const participants = await dbCtx.query<{ agent_id: string }>(
+    `SELECT DISTINCT ra.agent_id FROM ${tbl("role_assignments")} ra
+       JOIN ${tbl("roles")} r ON r.id = ra.role_id
+      WHERE r.circle_id = $1 AND ra.agent_id IS NOT NULL`,
+    [params.circleId],
+  );
+  const participantIds = participants.map((p) => p.agent_id);
+  if (participantIds.length === 0) {
+    console.warn(`[holacracy] D1: circle ${params.circleId} has no role-holders; skipping discussion+turn spawn`);
+    return { discussionId: "", issueIds: [] };
+  }
+
+  // Build a topic + prompt that surfaces the proposal content to participants.
+  const proposalContent = (idm.proposal ?? {}) as Record<string, unknown>;
+  const proposalKind = String((proposalContent as { kind?: unknown }).kind ?? "governance");
+  const proposalInner = (proposalContent as { content?: Record<string, unknown> }).content ?? {};
+  const proposalTitle = String(
+    (proposalInner as { proposedRoleName?: unknown }).proposedRoleName ??
+      (proposalInner as { title?: unknown }).title ??
+      `IDM ${proposalKind}`,
+  );
+  const proposalSummary = String(
+    (proposalInner as { rationale?: unknown }).rationale ??
+      (proposalInner as { description?: unknown }).description ??
+      "",
+  );
+
+  const discussionId = randomUUID();
+  const contextId = `idm-${idm.id}`;
+  // The dbCtx wrapper does NOT auto-format JS arrays for `::uuid[]` casts.
+  // Existing INSERT call sites build the Postgres array literal `{a,b,c}` by hand.
+  const participantsLiteral = `{${participantIds.join(",")}}`;
+  await dbCtx.execute(
+    `INSERT INTO public.circle_discussions
+       (id, company_id, circle_id, a2a_context_id, topic, prompt_for_agents,
+        participant_agent_ids, status, rounds_planned, rounds_completed,
+        meeting_kind, started_at, phase, idm_approval_id, motivating_tension_id)
+     VALUES ($1, $2, $3, $4, $5, $6,
+             $7::uuid[], 'in_progress', 6, 0,
+             'governance', NOW(), 'proposal', $8, $9)`,
+    [
+      discussionId,
+      params.companyId,
+      params.circleId,
+      contextId,
+      `[Governance IDM] ${proposalTitle}`.slice(0, DISCUSSION_TITLE_MAX),
+      `${proposalSummary}\n\n---\nProposal kind: ${proposalKind}\nIDM id: ${idm.id}\nWalking the 6 IDM phases: proposal → clarifying → reactions → amend → objections → integration.`,
+      participantsLiteral,
+      idm.id,
+      params.tensionId ?? null,
+    ],
+  );
+
+  // Reload as CircleDiscussionRow shape for spawnRoundTurnIssues.
+  const rows = await dbCtx.query<CircleDiscussionRow>(
+    `SELECT * FROM public.circle_discussions WHERE id = $1`,
+    [discussionId],
+  );
+  const discussion = rows[0];
+  if (!discussion) {
+    return { discussionId, issueIds: [] };
+  }
+
+  // Spawn per-agent turn issues for the proposal phase. They surface in each
+  // participant's inbox as `discussion:turn` issues with fingerprint
+  // `idm-proposal`. Agents work them via the holacracy-idm-* MCP tools.
+  const issueIds = await spawnRoundTurnIssues({
+    discussion,
+    roundNumber: 1,
+    digest: null,
+    fingerprintOverride: idmPhaseFingerprint("proposal"),
+    extraPrompt: idmPhasePrompt("proposal"),
+  });
+  return { discussionId, issueIds };
 }
 
 /**
@@ -3860,6 +3976,28 @@ async function setDiscussionPhase(
   );
   const refreshed = await loadDiscussion(discussionId);
   if (!refreshed || refreshed.phase !== toPhase) return null;
+
+  // Phase 1.22 D2 — cancel any not-yet-finished turn issues for the prior
+  // IDM phase. Without this, agents would keep stale fromPhase issues in
+  // their inbox while toPhase issues are spawning. We use a LIKE prefix to
+  // match cycle variants (e.g., 'idm-objections-c0', 'idm-objections-c1').
+  // Best-effort + idempotent — only affects rows still in backlog/in_progress.
+  try {
+    await dbCtx.execute(
+      `UPDATE public.issues
+          SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW()
+        WHERE origin_kind = $1
+          AND origin_id = $2
+          AND origin_fingerprint LIKE $3
+          AND status NOT IN ('done', 'cancelled')`,
+      [DISCUSSION_TURN_ORIGIN_KIND, discussionId, `idm-${fromPhase}%`],
+    );
+  } catch (err) {
+    console.warn(
+      `[holacracy] D2: failed to cancel prior-phase turns for ${discussionId} (fromPhase=${fromPhase}): ${(err as Error).message}`,
+    );
+  }
+
   try {
     await publishDiscussionEvent(refreshed, {
       kind: "discussion-idm-phase-advance",
@@ -5861,22 +5999,38 @@ const plugin = definePlugin({
           [runCtx.companyId, runCtx.agentId ?? null, circleId, JSON.stringify({ tensionId: id, title, type: tensionType })],
         );
 
-        // Trigger A: governance tension → auto-create 3-of-3 async approval
+        // Phase 1.22 D3 — governance tensions now route through IDM in the
+        // source circle (per Robertson constitution: the circle decides via
+        // IDM, not the board). idmPropose() also opens a governance discussion
+        // + spawns turn issues in every role-holder's inbox (D1).
+        // request_board_approval is preserved for rebellion-clause manual use.
+        let idmId: string | undefined;
         let approvalId: string | undefined;
         if (tensionType === "governance") {
-          const approvalResult = await createGovernanceApproval({
-            companyId: runCtx.companyId,
-            tensionId: id,
-            title,
-            description: description ?? null,
-            requestedByAgentId: runCtx.agentId ?? null,
-          });
-          if (approvalResult) {
-            approvalId = approvalResult.approvalId;
+          try {
+            const idmResult = await idmPropose({
+              companyId: runCtx.companyId,
+              circleId,
+              tensionId: id,
+              proposerAgentId: runCtx.agentId ?? undefined,
+              proposal: {
+                kind: "reformulate-task",
+                content: {
+                  raisedAs: "governance-tension",
+                  title,
+                  description: description ?? "",
+                  sourceTensionId: id,
+                },
+              },
+            });
+            idmId = idmResult.idm.id;
+            approvalId = idmResult.approvalId;
             await dbCtx!.execute(
-              `INSERT INTO ${tbl("audit_log")} (company_id, circle_id, action_type, action_detail) VALUES ($1, $2, 'governance-approval-created', $3)`,
-              [runCtx.companyId, circleId, JSON.stringify({ tensionId: id, approvalId: approvalResult.approvalId })],
+              `INSERT INTO ${tbl("audit_log")} (company_id, circle_id, action_type, action_detail) VALUES ($1, $2, 'governance-idm-opened', $3)`,
+              [runCtx.companyId, circleId, JSON.stringify({ tensionId: id, idmId: idmResult.idm.id, approvalId })],
             );
+          } catch (err) {
+            console.warn(`[holacracy] D3: idmPropose failed for governance tension ${id}: ${(err as Error).message}`);
           }
         }
 
@@ -5885,6 +6039,7 @@ const plugin = definePlugin({
             tensionId: id,
             status: "open",
             message: `Tension raised: "${title}" (${tensionType})`,
+            ...(idmId ? { idmId, phase: "proposal" } : {}),
             ...(approvalId ? { approvalId, approvalStatus: "pending" } : {}),
           }),
         };
@@ -7770,22 +7925,37 @@ ${policyList || "No policies defined yet."}
           [input.companyId, input.actor?.agentId ?? null, circleId, JSON.stringify({ tensionId: id, title, type: tensionType ?? "operational" })],
         );
 
-        // Trigger A: governance tension → auto-create 3-of-3 async approval
+        // Phase 1.22 D3 — governance tensions route to IDM (circle decides),
+        // not to a board approval. See the matching change in the holacracy-raise-tension
+        // tool handler above. Companion approval is still created via idmPropose() for
+        // the rebellion-clause escape hatch.
+        let idmId: string | undefined;
         let approvalId: string | undefined;
         if (tensionType === "governance") {
-          const approvalResult = await createGovernanceApproval({
-            companyId: input.companyId,
-            tensionId: id,
-            title,
-            description: description ?? null,
-            requestedByAgentId: null,
-          });
-          if (approvalResult) {
-            approvalId = approvalResult.approvalId;
+          try {
+            const idmResult = await idmPropose({
+              companyId: input.companyId,
+              circleId,
+              tensionId: id,
+              proposerAgentId: input.actor?.agentId ?? undefined,
+              proposal: {
+                kind: "reformulate-task",
+                content: {
+                  raisedAs: "governance-tension",
+                  title,
+                  description: description ?? "",
+                  sourceTensionId: id,
+                },
+              },
+            });
+            idmId = idmResult.idm.id;
+            approvalId = idmResult.approvalId;
             await dbCtx!.execute(
-              `INSERT INTO ${tbl("audit_log")} (company_id, circle_id, action_type, action_detail) VALUES ($1, $2, 'governance-approval-created', $3)`,
-              [input.companyId, circleId, JSON.stringify({ tensionId: id, approvalId: approvalResult.approvalId })],
+              `INSERT INTO ${tbl("audit_log")} (company_id, circle_id, action_type, action_detail) VALUES ($1, $2, 'governance-idm-opened', $3)`,
+              [input.companyId, circleId, JSON.stringify({ tensionId: id, idmId: idmResult.idm.id, approvalId })],
             );
+          } catch (err) {
+            console.warn(`[holacracy] D3 (API): idmPropose failed for governance tension ${id}: ${(err as Error).message}`);
           }
         }
 
@@ -7796,6 +7966,7 @@ ${policyList || "No policies defined yet."}
             title,
             type: tensionType ?? "operational",
             status: "open",
+            ...(idmId ? { idmId, phase: "proposal" } : {}),
             ...(approvalId ? { approvalId, approvalStatus: "pending" } : {}),
           },
         };

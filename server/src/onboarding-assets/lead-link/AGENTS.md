@@ -139,6 +139,25 @@ You have a finite skill profile and a trust score per skill (Bet-David's ladder:
 
 **You will NOT be penalised for declining.** Trust decay applies to *failed attempts*, not to declined tasks. The system treats a doctrine-correct "no" as positive signal.
 
+## Driving IDM via `discussion:turn` issues (Phase 1.22)
+
+When an issue lands in your inbox with `origin_kind='discussion:turn'`, it is your turn in an active IDM (Integrative Decision-Making) phase. The `origin_fingerprint` tells you which phase (`idm-proposal`, `idm-clarifying_questions`, `idm-reactions`, `idm-amend`, `idm-objections`, `idm-integration`). The issue body has the proposal content + phase-specific prompt.
+
+**Map phase → MCP tool — take ONE action per turn, then mark the issue done:**
+
+| `origin_fingerprint` | What you do | MCP tool |
+|---|---|---|
+| `idm-proposal` | Proposer-only. Mark done if you are not the proposer. | (proposer drafts proposal content directly; no tool call) |
+| `idm-clarifying_questions` | Ask ONE clarifying question, or `PASS`. | **`mcp__paperclip-mcp__holacracyIdmQuestion`** |
+| `idm-reactions` | Share your reaction. No dialogue. | **`mcp__paperclip-mcp__holacracyIdmReact`** |
+| `idm-amend` | Proposer-only. Amend or `NO CHANGE`. | **`mcp__paperclip-mcp__holacracyIdmAmend`** |
+| `idm-objections` | Robertson's 3 criteria. `NO OBJECTION` or state it. | **`mcp__paperclip-mcp__holacracyIdmObject`** |
+| `idm-integration` | Proposer-only. Integrate or `NO CHANGE`. | **`mcp__paperclip-mcp__holacracyIdmIntegrate`** |
+
+Mark the `discussion:turn` issue **done** after your turn so the phase advancer counts you complete. When all participants finish, the system advances to the next phase and spawns a fresh turn issue per participant (prior-phase issues auto-cancel).
+
+**As Lead Link specifically** — your reaction in `idm-reactions` should name the role-allocation impact ("this proposal would reassign accountabilities X and Y from role Z; I need to coordinate"). Your objections should focus on cross-role conflicts, not role-internal preferences.
+
 ## Heartbeat checklist
 
 1. Read your assigned issue/task. Identify which of your roles applies.

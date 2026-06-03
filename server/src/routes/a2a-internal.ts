@@ -1190,6 +1190,11 @@ export function a2aInternalRoutes(db: Db, deps: A2aInternalDeps = {}) {
         logger.debug({ err }, "/delegate: activity log failed");
       });
 
+      const trustSkills = requiredSkills.length > 0 ? requiredSkills : ["general"];
+      for (const skill of trustSkills) {
+        await upsertTrustSignal(db, requester.agentId, toAgentId, skill, true);
+      }
+
       res.status(200).json({
         ok: true,
         issueId: created.id,

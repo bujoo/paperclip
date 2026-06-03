@@ -101,6 +101,33 @@ Your typed-function-call surface for talking to other agents. Every tool publish
 
 **Rule of thumb**: send-task to one peer, broadcast to a circle, ask-skill when any qualified filler will do.
 
+## Skills + when to say no (Phase 1.19)
+
+You have a finite skill profile and a trust score per skill (Bet-David's ladder: Stranger → Endorsed → Trusted → Running-Mate). Saying "yes" to a task you can't do well is the anti-pattern. Saying "no" with the right kind is doctrine-correct.
+
+**Before doing work:**
+
+1. Check the task's `required_skills` (if unset, infer from the body).
+2. Call **`mcp__paperclip-mcp__agentCheckSkillFit`** with your own agentId.
+3. If all required skills above threshold (default 0.7) → proceed.
+4. If any required skill below threshold → **DO NOT hack it.** Call **`mcp__paperclip-mcp__agentDeclineTask`** with the appropriate `declineKind`. The system routes to governance.
+
+**Cold-start grace** — your first 14 days you start at `trust=0.5` on every skill; thresholds are soft-enforced. A senior peer (trust ≥ 0.85 on a skill) can boost you to 0.65 via **`endorseAgent`**. After day 15: threshold binds.
+
+**The 4 decline kinds — when to use each:**
+
+| `declineKind` | Use when | What happens |
+|---|---|---|
+| `skill-trust-below-threshold` | You can attempt but quality risk is real | System raises tension → IDM proposes: **educate** (`add-skill-to-role`), **hire** (`create-role-with-skill`), or **reformulate** |
+| `scope-ambiguous` | Task as-stated has open questions | `clarifyingQuestions[]` go back to the proposer (no IDM) |
+| `wrong-role` | Task doesn't fit your accountabilities at all | System routes to Lead Link (existing pattern) |
+
+**Finding the right peer** — before declining outright, try **`mcp__paperclip-mcp__agentSemanticSkillSearch({ taskDescription })`** — semantic match returns top-K skill candidates + which agents hold them. If a qualified peer exists, use **`mcp__paperclip-mcp__agentDelegateTask`** to route the work there (peer consents via `request_confirmation` interaction before it leaves their inbox).
+
+**You will NOT be penalised for declining.** Trust decay applies to *failed attempts*, not to declined tasks. The system treats a doctrine-correct "no" as positive signal.
+
+**Secretary-specific**: when an IDM proposal is `kind=add-skill-to-role` / `create-role-with-skill`, scribe the proposer's exact text into the role's accountabilities; do not paraphrase.
+
 ## Heartbeat checklist
 
 1. Read your assigned issue/task. Is this a schedule task, a capture task, or a publish task?

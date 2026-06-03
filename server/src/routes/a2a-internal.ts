@@ -34,9 +34,30 @@ import {
   skillPoolTopic,
   skillBroadcastTopic,
 } from "@paperclipai/adapter-a2a-mqtt/server";
+import type { ToolRunContext } from "@paperclipai/plugin-sdk";
 import * as perAgentClientManager from "../mqtt/per-agent-client-manager.js";
 import { logger } from "../middleware/logger.js";
-import { resolveRequester } from "./holacracy-bridge.js";
+import { resolveRequester, type ResolvedRequester } from "./holacracy-bridge.js";
+import { upsertTrustSignal } from "../services/trust-signals.js";
+import {
+  semanticSkillSearch,
+  findCandidateAgentsForSkill,
+} from "../services/skill-index.js";
+import {
+  agentTrustScore,
+  TRUST_THRESHOLD,
+  ENDORSER_MIN_TRUST,
+  ENDORSEMENT_TARGET_TYPE,
+  ENDORSEMENT_VOTE,
+  endorsementTargetId,
+  encodeEndorsementAuthor,
+} from "../services/trust-score.js";
+import { logActivity } from "../services/activity-log.js";
+import { issueService } from "../services/issues.js";
+import type { PluginToolDispatcher } from "../services/plugin-tool-dispatcher.js";
+
+const HOLACRACY_RAISE_TENSION_TOOL =
+  "paperclipai.plugin-holacracy:holacracy-raise-tension-on-bus";
 
 interface ErrorShape {
   status: number;
@@ -137,8 +158,85 @@ async function resolvePrimaryCircle(db: Db, agentId: string): Promise<string | n
 type PublishKind = "event-self" | "event-circle" | "role-broadcast" | "skill-broadcast";
 type RequestKind = "agent" | "role-pool" | "skill-pool";
 
-export function a2aInternalRoutes(db: Db) {
+export interface A2aInternalDeps {
+  /** Optional plugin tool dispatcher — when present, decline can raise a holacracy tension. */
+  toolDispatcher?: PluginToolDispatcher;
+}
+
+export function a2aInternalRoutes(db: Db, deps: A2aInternalDeps = {}) {
   const router = Router();
+
+  /**
+   * Best-effort: load an issue's companyId + assigneeAgentId + title for
+   * the decline endpoint. Returns null if the row is missing or belongs
+   * to another company.
+   */
+  async function loadIssueForCompany(
+    issueId: string,
+    companyId: string,
+  ): Promise<{ id: string; companyId: string; title: string; assigneeAgentId: string | null } | null> {
+    try {
+      const rows = await db.execute<{
+        id: string;
+        company_id: string;
+        title: string;
+        assignee_agent_id: string | null;
+      }>(sql`
+        SELECT id::text          AS id,
+               company_id::text  AS company_id,
+               title             AS title,
+               assignee_agent_id::text AS assignee_agent_id
+          FROM public.issues
+         WHERE id = ${issueId}::uuid
+         LIMIT 1
+      `);
+      const list = Array.isArray(rows)
+        ? rows
+        : (rows as unknown as { rows?: typeof rows }).rows ?? [];
+      const first = (list as Array<{
+        id: string;
+        company_id: string;
+        title: string;
+        assignee_agent_id: string | null;
+      }>)[0];
+      if (!first) return null;
+      if (first.company_id !== companyId) return null;
+      return {
+        id: first.id,
+        companyId: first.company_id,
+        title: first.title,
+        assigneeAgentId: first.assignee_agent_id,
+      };
+    } catch (err) {
+      logger.debug({ err, issueId, companyId }, "a2a-internal: loadIssueForCompany failed");
+      return null;
+    }
+  }
+
+  async function insertIssueComment(
+    companyId: string,
+    issueId: string,
+    agentId: string,
+    body: string,
+  ): Promise<void> {
+    try {
+      await db.execute(sql`
+        INSERT INTO public.issue_comments (company_id, issue_id, author_agent_id, body)
+        VALUES (${companyId}::uuid, ${issueId}::uuid, ${agentId}::uuid, ${body})
+      `);
+    } catch (err) {
+      logger.warn({ err, issueId }, "a2a-internal: failed to insert decline comment (best-effort)");
+    }
+  }
+
+  function buildRunContext(requester: ResolvedRequester): ToolRunContext {
+    return {
+      agentId: requester.agentId,
+      runId: requester.runId,
+      companyId: requester.companyId,
+      projectId: requester.projectId,
+    };
+  }
 
   /**
    * POST /api/internal/a2a/publish — fire-and-forget on a topic the server
@@ -244,6 +342,11 @@ export function a2aInternalRoutes(db: Db) {
       }
 
       let targetRequestTopic: string;
+      // T1 — directTargetAgentId is set only for kind==="agent"; pool dispatch
+      // resolves the responder after the fact (via a2a-responder-agent-id user
+      // property on the reply). For trust-signal writes we only credit/debit
+      // when we know the specific target.
+      let directTargetAgentId: string | null = null;
       switch (kind) {
         case "agent": {
           const toAgentId = requireString(body, "toAgentId");
@@ -256,6 +359,7 @@ export function a2aInternalRoutes(db: Db) {
             };
           }
           targetRequestTopic = requestTopic(companyId, targetCircle, toAgentId);
+          directTargetAgentId = toAgentId;
           break;
         }
         case "role-pool": {
@@ -311,6 +415,17 @@ export function a2aInternalRoutes(db: Db) {
             ...extraUserProperties,
           },
         });
+        // T1 — record successful trust signal (I1 regression fix).
+        // For directed (kind="agent") requests, the responder is known;
+        // credit them. For pool dispatch, the responder MAY be carried in
+        // a2a-responder-agent-id user property on the reply — use that
+        // when present.
+        const respondedByFromUserProps = reply.userProperties?.["a2a-responder-agent-id"];
+        const responderAgentId = directTargetAgentId
+          ?? (typeof respondedByFromUserProps === "string" ? respondedByFromUserProps : null);
+        if (responderAgentId) {
+          await upsertTrustSignal(db, requester.agentId, responderAgentId, "general", true);
+        }
         res.status(200).json({
           taskId,
           contextId: contextId ?? taskId,
@@ -323,6 +438,12 @@ export function a2aInternalRoutes(db: Db) {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.toLowerCase().includes("timeout") || message.toLowerCase().includes("timed out")) {
+          // T1 — record failed trust signal on timeout (I1 regression fix).
+          // Only when we know the specific target (directed kind="agent");
+          // pool dispatch timeouts don't have a single agent to debit.
+          if (directTargetAgentId) {
+            await upsertTrustSignal(db, requester.agentId, directTargetAgentId, "general", false);
+          }
           res.status(200).json({
             taskId,
             contextId: contextId ?? taskId,
@@ -374,6 +495,709 @@ export function a2aInternalRoutes(db: Db) {
       res.status(200).json(data);
     } catch (err) {
       logger.warn({ err }, "GET /internal/a2a/agents failed");
+      sendError(res, err);
+    }
+  });
+
+  /**
+   * POST /api/internal/skill-index/search — semantic skill discovery.
+   *
+   * Body: { companyId, query, topK? } (topK defaults to 5).
+   *
+   * Returns top-K SKILL.md chunks whose vector embeddings (Bedrock
+   * Cohere) most closely match the query. Each result is enriched with
+   * candidate agents (those whose role accountabilities mention the
+   * skill slug) and their aggregate trust scores. Use this BEFORE
+   * a2aSendTask to find the right peer for a task.
+   */
+  router.post("/internal/skill-index/search", async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const companyId = requireString(body, "companyId");
+      const query = requireString(body, "query");
+      const topKRaw = body.topK;
+      const topK = typeof topKRaw === "number" && Number.isFinite(topKRaw) && topKRaw > 0
+        ? Math.min(20, Math.floor(topKRaw))
+        : 5;
+
+      // Auth: same per-agent gate as the other internal endpoints.
+      await resolveRequester(db, req, companyId);
+
+      const matches = await semanticSkillSearch(db, companyId, query, topK);
+
+      // Deduplicate candidate-agent lookups by skillSlug (multiple chunks
+      // from the same skill share the same candidate pool).
+      const candidatesBySlug = new Map<string, Awaited<ReturnType<typeof findCandidateAgentsForSkill>>>();
+      for (const match of matches) {
+        if (candidatesBySlug.has(match.skillSlug)) continue;
+        candidatesBySlug.set(
+          match.skillSlug,
+          await findCandidateAgentsForSkill(db, companyId, match.skillSlug),
+        );
+      }
+
+      const results = matches.map((match) => ({
+        skillId: match.skillId,
+        skillSlug: match.skillSlug,
+        skillName: match.skillName,
+        chunkIndex: match.chunkIndex,
+        chunkText: match.chunkText,
+        semanticDistance: match.semanticDistance,
+        candidateAgents: candidatesBySlug.get(match.skillSlug) ?? [],
+      }));
+
+      res.status(200).json({ results });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  /**
+   * POST /api/internal/skill-fit/check — answer "do I have the trust
+   * needed for this task on each required skill?".
+   *
+   * Body: { companyId, taskDescription, candidateAgentId?, requiredSkills? }
+   *
+   * If `requiredSkills` is omitted, the server infers it via a top-3
+   * semantic search against the company's SKILL.md catalog. For each
+   * skill we compute `agentTrustScore` for the candidate (or the caller
+   * when `candidateAgentId` is missing) and partition into `have` vs
+   * `missing` against `TRUST_THRESHOLD`. We also list suggested
+   * alternative agents drawn from `findCandidateAgentsForSkill`.
+   */
+  router.post("/internal/skill-fit/check", async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const companyId = requireString(body, "companyId");
+      const taskDescription = requireString(body, "taskDescription");
+      const candidateAgentIdInput = optionalString(body, "candidateAgentId");
+      const requiredSkillsRaw = body.requiredSkills;
+
+      const requester = await resolveRequester(db, req, companyId);
+      const candidateAgentId = candidateAgentIdInput ?? requester.agentId;
+
+      // Resolve the required-skills set.
+      let requiredSkills: string[];
+      let inferred = false;
+      if (Array.isArray(requiredSkillsRaw) && requiredSkillsRaw.length > 0) {
+        const sanitised = requiredSkillsRaw
+          .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+          .map((s) => s.trim());
+        if (sanitised.length === 0) {
+          throw {
+            status: 400,
+            code: "VALIDATION_ERROR",
+            message: '"requiredSkills" must contain at least one non-empty string',
+          };
+        }
+        requiredSkills = Array.from(new Set(sanitised));
+      } else {
+        inferred = true;
+        const matches = await semanticSkillSearch(db, companyId, taskDescription, 6);
+        const seen = new Set<string>();
+        requiredSkills = [];
+        for (const match of matches) {
+          if (seen.has(match.skillSlug)) continue;
+          seen.add(match.skillSlug);
+          requiredSkills.push(match.skillSlug);
+          if (requiredSkills.length >= 3) break;
+        }
+      }
+
+      const have: Array<{
+        skill: string;
+        trustScore: number;
+        isInGrace: boolean;
+        basedOn: string;
+      }> = [];
+      const missing: Array<{
+        skill: string;
+        trustScore: number;
+        isInGrace: boolean;
+        basedOn: string;
+        requiredThreshold: number;
+      }> = [];
+      const suggestedAlternatives: Array<{
+        agentId: string;
+        agentName: string | null;
+        skill: string;
+        trustScore: number | null;
+      }> = [];
+
+      for (const skill of requiredSkills) {
+        const score = await agentTrustScore(db, candidateAgentId, skill);
+        const meets = score.score >= TRUST_THRESHOLD || score.isInGrace;
+        if (meets) {
+          have.push({
+            skill,
+            trustScore: score.score,
+            isInGrace: score.isInGrace,
+            basedOn: score.basedOn,
+          });
+        } else {
+          missing.push({
+            skill,
+            trustScore: score.score,
+            isInGrace: score.isInGrace,
+            basedOn: score.basedOn,
+            requiredThreshold: TRUST_THRESHOLD,
+          });
+          // Look up alternative fillers for the missing skill.
+          const candidates = await findCandidateAgentsForSkill(db, companyId, skill);
+          for (const c of candidates) {
+            if (c.agentId === candidateAgentId) continue;
+            // Filter to candidates who clear the threshold.
+            if (c.trustScore !== null && c.trustScore < TRUST_THRESHOLD) continue;
+            suggestedAlternatives.push({
+              agentId: c.agentId,
+              agentName: c.agentName,
+              skill,
+              trustScore: c.trustScore,
+            });
+          }
+        }
+      }
+
+      res.status(200).json({
+        candidateAgentId,
+        requiredSkills,
+        requiredSkillsInferred: inferred,
+        have,
+        missing,
+        suggestedAlternatives,
+      });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  /**
+   * POST /api/internal/a2a/decline — agent declines an assigned task.
+   *
+   * Body:
+   *  - { companyId, taskId, declineKind: "skill-trust-below-threshold",
+   *      trustScore?, missingSkills? }
+   *  - { companyId, taskId, declineKind: "scope-ambiguous",
+   *      clarifyingQuestions: string[] }
+   *  - { companyId, taskId, declineKind: "wrong-role" }
+   *
+   * Side effects vary by `declineKind`:
+   *  - skill-trust-below-threshold → issue.status=blocked + comment +
+   *    raise a holacracy tension (best-effort) so the lead-link can route.
+   *  - scope-ambiguous → create an `ask_user_questions` interaction with
+   *    the clarifying questions + mark issue blocked pending answer.
+   *  - wrong-role → clear assigneeAgentId + comment + activity log.
+   */
+  router.post("/internal/a2a/decline", async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const companyId = requireString(body, "companyId");
+      const taskId = requireString(body, "taskId");
+      const declineKindRaw = requireString(body, "declineKind");
+      const allowed = ["skill-trust-below-threshold", "scope-ambiguous", "wrong-role"] as const;
+      type DeclineKind = (typeof allowed)[number];
+      if (!(allowed as readonly string[]).includes(declineKindRaw)) {
+        throw {
+          status: 400,
+          code: "VALIDATION_ERROR",
+          message: `"declineKind" must be one of ${allowed.join(", ")}`,
+        };
+      }
+      const declineKind = declineKindRaw as DeclineKind;
+      const trustScore = optionalNumber(body, "trustScore");
+
+      const requester = await resolveRequester(db, req, companyId);
+      const issue = await loadIssueForCompany(taskId, companyId);
+      if (!issue) {
+        throw {
+          status: 404,
+          code: "ISSUE_NOT_FOUND",
+          message: `Issue ${taskId} not found in company ${companyId}`,
+        };
+      }
+
+      const sideEffects: string[] = [];
+
+      if (declineKind === "skill-trust-below-threshold") {
+        const missingSkillsRaw = body.missingSkills;
+        const missingSkills = Array.isArray(missingSkillsRaw)
+          ? missingSkillsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+          : [];
+
+        try {
+          await db.execute(sql`
+            UPDATE public.issues
+               SET status = 'blocked',
+                   updated_at = NOW()
+             WHERE id = ${taskId}::uuid
+          `);
+          sideEffects.push("issue.status=blocked");
+        } catch (err) {
+          logger.warn({ err, taskId }, "a2a-internal: decline failed to mark issue blocked");
+        }
+
+        const trustText = trustScore !== undefined
+          ? ` (trust=${trustScore.toFixed(2)}, threshold=${TRUST_THRESHOLD})`
+          : "";
+        const skillsText = missingSkills.length > 0
+          ? ` Missing: ${missingSkills.join(", ")}.`
+          : "";
+        const comment =
+          `Declining this task: skill trust below threshold${trustText}.${skillsText}` +
+          " Raising a tension so the Lead Link can re-route.";
+        await insertIssueComment(companyId, taskId, requester.agentId, comment);
+        sideEffects.push("comment.posted");
+
+        // Best-effort: raise a tension via the holacracy plugin worker on
+        // the caller's primary circle (the lead-link of that circle is
+        // the standard escalation target). Fail open if the plugin is
+        // unavailable — the comment + activity log are the durable record.
+        const callerCircle = await resolvePrimaryCircle(db, requester.agentId);
+        if (deps.toolDispatcher && callerCircle) {
+          try {
+            const tool = deps.toolDispatcher.getTool(HOLACRACY_RAISE_TENSION_TOOL);
+            if (tool) {
+              const tensionBody =
+                `Agent ${requester.agentId} declined task "${issue.title}" (${taskId})` +
+                ` due to skill-trust below ${TRUST_THRESHOLD}${trustText}.` +
+                (missingSkills.length > 0 ? ` Missing skills: ${missingSkills.join(", ")}.` : "") +
+                " Lead Link: please reassign to a qualified filler.";
+              await deps.toolDispatcher.executeTool(
+                HOLACRACY_RAISE_TENSION_TOOL,
+                {
+                  circleId: callerCircle,
+                  title: `Skill-trust decline: ${issue.title}`,
+                  body: tensionBody,
+                  severity: "medium",
+                },
+                buildRunContext(requester),
+              );
+              sideEffects.push("tension.raised");
+            }
+          } catch (err) {
+            logger.warn({ err, taskId, circleId: callerCircle }, "a2a-internal: tension raise failed");
+          }
+        }
+
+        await logActivity(db, {
+          companyId,
+          actorType: "agent",
+          actorId: requester.agentId,
+          agentId: requester.agentId,
+          action: "issue.declined",
+          entityType: "issue",
+          entityId: taskId,
+          details: {
+            declineKind,
+            trustScore: trustScore ?? null,
+            missingSkills,
+          },
+        }).catch((err) => {
+          logger.debug({ err }, "a2a-internal: activity log (decline) failed");
+        });
+
+        res.status(200).json({ ok: true, declineKind, sideEffects });
+        return;
+      }
+
+      if (declineKind === "scope-ambiguous") {
+        const clarifyingQuestionsRaw = body.clarifyingQuestions;
+        if (!Array.isArray(clarifyingQuestionsRaw) || clarifyingQuestionsRaw.length === 0) {
+          throw {
+            status: 400,
+            code: "VALIDATION_ERROR",
+            message: '"clarifyingQuestions" must be a non-empty array of strings',
+          };
+        }
+        const questions = clarifyingQuestionsRaw
+          .filter((q): q is string => typeof q === "string" && q.trim().length > 0)
+          .slice(0, 10);
+        if (questions.length === 0) {
+          throw {
+            status: 400,
+            code: "VALIDATION_ERROR",
+            message: '"clarifyingQuestions" must contain at least one non-empty string',
+          };
+        }
+
+        // Mark blocked pending answer.
+        try {
+          await db.execute(sql`
+            UPDATE public.issues
+               SET status = 'blocked',
+                   updated_at = NOW()
+             WHERE id = ${taskId}::uuid
+          `);
+          sideEffects.push("issue.status=blocked");
+        } catch (err) {
+          logger.warn({ err, taskId }, "a2a-internal: decline failed to mark scope-ambiguous issue blocked");
+        }
+
+        const payload = {
+          version: 1 as const,
+          title: "Clarifying questions",
+          submitLabel: "Submit answers",
+          questions: questions.map((prompt, i) => ({
+            id: `q${i + 1}`,
+            prompt: prompt.length > 500 ? prompt.slice(0, 500) : prompt,
+            selectionMode: "single" as const,
+            required: true,
+            options: [
+              { id: "yes", label: "Yes" },
+              { id: "no", label: "No" },
+            ],
+          })),
+        };
+
+        try {
+          await db.execute(sql`
+            INSERT INTO public.issue_thread_interactions
+              (company_id, issue_id, kind, status, continuation_policy, payload, created_by_agent_id)
+            VALUES
+              (${companyId}::uuid, ${taskId}::uuid, 'ask_user_questions', 'pending', 'wake_assignee',
+               ${JSON.stringify(payload)}::jsonb, ${requester.agentId}::uuid)
+          `);
+          sideEffects.push("interaction.ask_user_questions.created");
+        } catch (err) {
+          logger.warn({ err, taskId }, "a2a-internal: failed to create ask_user_questions interaction");
+        }
+
+        await insertIssueComment(
+          companyId,
+          taskId,
+          requester.agentId,
+          `Declining as scope is ambiguous; posted ${questions.length} clarifying question(s).`,
+        );
+        sideEffects.push("comment.posted");
+
+        await logActivity(db, {
+          companyId,
+          actorType: "agent",
+          actorId: requester.agentId,
+          agentId: requester.agentId,
+          action: "issue.declined",
+          entityType: "issue",
+          entityId: taskId,
+          details: { declineKind, clarifyingQuestions: questions },
+        }).catch((err) => {
+          logger.debug({ err }, "a2a-internal: activity log (decline scope) failed");
+        });
+
+        res.status(200).json({ ok: true, declineKind, sideEffects });
+        return;
+      }
+
+      // wrong-role
+      try {
+        await db.execute(sql`
+          UPDATE public.issues
+             SET assignee_agent_id = NULL,
+                 updated_at        = NOW()
+           WHERE id = ${taskId}::uuid
+        `);
+        sideEffects.push("issue.assignee=null");
+      } catch (err) {
+        logger.warn({ err, taskId }, "a2a-internal: decline (wrong-role) failed to clear assignee");
+      }
+      await insertIssueComment(
+        companyId,
+        taskId,
+        requester.agentId,
+        "Out-of-role decline; needs Lead Link routing.",
+      );
+      sideEffects.push("comment.posted");
+      await logActivity(db, {
+        companyId,
+        actorType: "agent",
+        actorId: requester.agentId,
+        agentId: requester.agentId,
+        action: "issue.declined",
+        entityType: "issue",
+        entityId: taskId,
+        details: { declineKind },
+      }).catch((err) => {
+        logger.debug({ err }, "a2a-internal: activity log (decline wrong-role) failed");
+      });
+
+      res.status(200).json({ ok: true, declineKind, sideEffects });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  /**
+   * POST /api/internal/a2a/endorse — caller endorses another agent's
+   * skill. Requires the caller to clear `ENDORSER_MIN_TRUST` (0.85) on
+   * the same skill, so endorsements compound from established trust.
+   *
+   * Body: { companyId, targetAgentId, skillSlug, rationale }
+   *
+   * Stored as a row in `public.feedback_votes` with
+   * `target_type='agent_skill_endorsement'`, `vote='endorsed'`. We need
+   * an `issue_id` (NOT NULL FK) — `feedback_votes.issue_id` is used as
+   * the originating context, so we use the requester's
+   * `ResolvedRequester.projectId` to find a recent issue, falling back
+   * to any company-scoped issue. If no issue exists for the company, the
+   * endorsement is rejected (endorsements outside any operational
+   * context are not currently supported by the schema).
+   */
+  router.post("/internal/a2a/endorse", async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const companyId = requireString(body, "companyId");
+      const targetAgentId = requireString(body, "targetAgentId");
+      const skillSlug = requireString(body, "skillSlug").trim().toLowerCase();
+      const rationale = requireString(body, "rationale");
+
+      const requester = await resolveRequester(db, req, companyId);
+      if (targetAgentId === requester.agentId) {
+        throw {
+          status: 400,
+          code: "SELF_ENDORSEMENT",
+          message: "You cannot endorse yourself",
+        };
+      }
+
+      // Gate: caller must clear ENDORSER_MIN_TRUST on this skill.
+      const callerScore = await agentTrustScore(db, requester.agentId, skillSlug);
+      if (callerScore.score < ENDORSER_MIN_TRUST) {
+        throw {
+          status: 403,
+          code: "ENDORSER_BELOW_THRESHOLD",
+          message:
+            `Your trust on "${skillSlug}" is ${callerScore.score.toFixed(2)}; endorsement requires >= ${ENDORSER_MIN_TRUST}`,
+        };
+      }
+
+      // Resolve an issue id to satisfy the NOT NULL FK on feedback_votes.issue_id.
+      let issueId: string | null = null;
+      try {
+        const rows = await db.execute<{ id: string }>(sql`
+          SELECT id::text AS id
+            FROM public.issues
+           WHERE company_id = ${companyId}::uuid
+           ORDER BY created_at DESC
+           LIMIT 1
+        `);
+        const list = Array.isArray(rows) ? rows : (rows as unknown as { rows?: typeof rows }).rows ?? [];
+        const first = (list as Array<{ id: string }>)[0];
+        issueId = first?.id ?? null;
+      } catch (err) {
+        logger.debug({ err, companyId }, "a2a-internal: endorse issue lookup failed");
+      }
+      if (!issueId) {
+        throw {
+          status: 409,
+          code: "NO_ISSUE_CONTEXT",
+          message: "Endorsements require at least one issue in the company to anchor the vote",
+        };
+      }
+
+      const targetId = endorsementTargetId(targetAgentId, skillSlug);
+      const authorEncoded = encodeEndorsementAuthor(requester.agentId);
+
+      try {
+        await db.execute(sql`
+          INSERT INTO public.feedback_votes
+            (company_id, issue_id, target_type, target_id, author_user_id, vote, reason)
+          VALUES
+            (${companyId}::uuid, ${issueId}::uuid, ${ENDORSEMENT_TARGET_TYPE},
+             ${targetId}, ${authorEncoded}, ${ENDORSEMENT_VOTE}, ${rationale})
+          ON CONFLICT (company_id, target_type, target_id, author_user_id) DO UPDATE
+            SET vote = EXCLUDED.vote,
+                reason = EXCLUDED.reason,
+                updated_at = NOW()
+        `);
+      } catch (err) {
+        logger.warn({ err, targetAgentId, skillSlug }, "a2a-internal: endorse UPSERT failed");
+        throw {
+          status: 500,
+          code: "ENDORSEMENT_WRITE_FAILED",
+          message: "Failed to persist endorsement",
+        };
+      }
+
+      await logActivity(db, {
+        companyId,
+        actorType: "agent",
+        actorId: requester.agentId,
+        agentId: requester.agentId,
+        action: "agent.endorsed",
+        entityType: "agent",
+        entityId: targetAgentId,
+        details: { skillSlug, rationale, callerTrust: callerScore.score },
+      }).catch((err) => {
+        logger.debug({ err }, "a2a-internal: activity log (endorse) failed");
+      });
+
+      // Recompute target's trust after the endorsement is in place.
+      const endorsedTrustScore = await agentTrustScore(db, targetAgentId, skillSlug);
+
+      res.status(200).json({
+        ok: true,
+        endorsedTrustScore: endorsedTrustScore.score,
+        endorsedBy: endorsedTrustScore.endorsedBy,
+        basedOn: endorsedTrustScore.basedOn,
+      });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  /**
+   * POST /api/internal/a2a/delegate — T5 + T6 (Phase 1.18 I2 + 1.19 E-set).
+   *
+   * Peer-delegation primitive. An agent files a `next_action` issue for
+   * another agent in the same company with `origin_kind='peer_delegation'`.
+   *
+   * Skill-fit gate (T6): if `requiredSkills[]` is provided, each is
+   * trust-checked against the target via `agentTrustScore`. If any skill
+   * is below threshold (and target is past 14-day grace), the delegation
+   * is refused with 409 and a structural tension is auto-raised on the
+   * target's primary circle (Lead Link can propose add-skill-to-role,
+   * reassign-role, or create-role-with-skill via IDM C-set).
+   *
+   * Consent semantics: the receiver gets the issue assigned to them. They
+   * either do it (implicit accept) OR invoke `agentDeclineTask` (explicit
+   * decline) — same primitive they'd use for any orchestrated task.
+   *
+   * Body: { companyId, toAgentId, title, description?, requiredSkills?, urgency? }
+   */
+  router.post("/internal/a2a/delegate", async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const companyId = requireString(body, "companyId");
+      const toAgentId = requireString(body, "toAgentId");
+      const title = requireString(body, "title");
+      const description = optionalString(body, "description");
+      const urgency = optionalString(body, "urgency");
+      const requiredSkillsRaw = body.requiredSkills;
+      const requiredSkills = Array.isArray(requiredSkillsRaw)
+        ? requiredSkillsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        : [];
+
+      const requester = await resolveRequester(db, req, companyId);
+      if (toAgentId === requester.agentId) {
+        throw { status: 400, code: "SELF_DELEGATION", message: "Cannot delegate to yourself" };
+      }
+
+      // T6 — skill-fit gate. Check each required skill against target's trust.
+      if (requiredSkills.length > 0) {
+        const fits: Array<{ skill: string; score: number; isInGrace: boolean }> = [];
+        const misses: Array<{ skill: string; score: number }> = [];
+        for (const skill of requiredSkills) {
+          const ts = await agentTrustScore(db, toAgentId, skill);
+          if (ts.score >= TRUST_THRESHOLD || ts.isInGrace) {
+            fits.push({ skill, score: ts.score, isInGrace: ts.isInGrace });
+          } else {
+            misses.push({ skill, score: ts.score });
+          }
+        }
+        if (misses.length > 0) {
+          // Auto-raise structural tension on target's primary circle so the
+          // Lead Link can propose add-skill-to-role / reassign / create-role.
+          const targetCircle = await resolvePrimaryCircle(db, toAgentId);
+          let tensionRaised = false;
+          if (deps.toolDispatcher && targetCircle) {
+            try {
+              const tool = deps.toolDispatcher.getTool(HOLACRACY_RAISE_TENSION_TOOL);
+              if (tool) {
+                const missText = misses
+                  .map((m) => `${m.skill} (trust=${m.score.toFixed(2)})`)
+                  .join(", ");
+                await deps.toolDispatcher.executeTool(
+                  HOLACRACY_RAISE_TENSION_TOOL,
+                  {
+                    circleId: targetCircle,
+                    title: `Skill-gap on delegation refusal: ${title}`,
+                    body:
+                      `Agent ${requester.agentId} tried to delegate "${title}" to ${toAgentId} ` +
+                      `but the target's trust is below ${TRUST_THRESHOLD} on: ${missText}. ` +
+                      `Required skills: ${requiredSkills.join(", ")}. ` +
+                      `Lead Link: propose add-skill-to-role (educate), reassign-role (route to qualified peer), ` +
+                      `or create-role-with-skill (hire). All available as IDM proposal kinds.`,
+                    severity: "medium",
+                  },
+                  buildRunContext(requester),
+                );
+                tensionRaised = true;
+              }
+            } catch (err) {
+              logger.warn(
+                { err, toAgentId, targetCircle },
+                "/delegate: structural tension raise failed",
+              );
+            }
+          }
+          res.status(409).json({
+            ok: false,
+            code: "SKILL_FIT_DECLINED",
+            message: "Target agent below trust threshold for required skill(s)",
+            fits,
+            misses,
+            tensionRaised,
+          });
+          return;
+        }
+      }
+
+      // Resolve a project for the issue — prefer target's circle root project.
+      const targetCircle = await resolvePrimaryCircle(db, toAgentId);
+      let projectId: string | null = null;
+      if (targetCircle) {
+        const projRows = await db.execute<{ project_id: string }>(sql`
+          SELECT project_id::text AS project_id
+            FROM plugin_holacracy_c5049b5dfe.circles
+           WHERE id = ${targetCircle}::uuid AND project_id IS NOT NULL
+           LIMIT 1
+        `);
+        const projList = Array.isArray(projRows)
+          ? projRows
+          : (projRows as unknown as { rows?: typeof projRows }).rows ?? [];
+        projectId = (projList as Array<{ project_id: string }>)[0]?.project_id ?? null;
+      }
+      if (!projectId) projectId = requester.projectId;
+
+      const issues = issueService(db);
+      const created = await issues.create(companyId, {
+        title,
+        description: description ?? null,
+        kind: "next_action",
+        assigneeAgentId: toAgentId,
+        projectId,
+        originKind: "peer_delegation",
+        originId: requester.agentId,
+        originRunId: requester.runId,
+        requiredSkills,
+        status: "todo",
+      });
+
+      await logActivity(db, {
+        companyId,
+        actorType: "agent",
+        actorId: requester.agentId,
+        agentId: requester.agentId,
+        action: "agent.delegated",
+        entityType: "issue",
+        entityId: created.id,
+        details: {
+          toAgentId,
+          title,
+          requiredSkills,
+          ...(urgency ? { urgency } : {}),
+        },
+      }).catch((err) => {
+        logger.debug({ err }, "/delegate: activity log failed");
+      });
+
+      res.status(200).json({
+        ok: true,
+        issueId: created.id,
+        assigneeAgentId: toAgentId,
+        requiredSkills,
+        originKind: "peer_delegation",
+      });
+    } catch (err) {
       sendError(res, err);
     }
   });

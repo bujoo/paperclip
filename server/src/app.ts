@@ -297,7 +297,7 @@ export async function createApp(
   api.use(holacracyBridgeRoutes(db, { toolDispatcher }));
   // E8 — internal endpoints the MCP server child process calls to publish A2A
   // on behalf of the calling agent. Mounted under /api/internal/a2a/*.
-  api.use(a2aInternalRoutes(db));
+  api.use(a2aInternalRoutes(db, { toolDispatcher }));
   // EMQX HTTP Auth + ACL callbacks (mounted under /api → /api/internal/mqtt-auth, /api/internal/mqtt-acl).
   // These endpoints are called by the broker on every CONNECT. The
   // `requireMqttInternalAuth()` middleware enforces a shared-secret header

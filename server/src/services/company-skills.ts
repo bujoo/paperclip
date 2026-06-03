@@ -32,6 +32,8 @@ import { notFound, unprocessable } from "../errors.js";
 import { ghFetch, gitHubApiBase, resolveRawGitHubUrl } from "./github-fetch.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
+import { indexSkill } from "./skill-index.js";
+import { logger } from "../middleware/logger.js";
 
 type CompanySkillRow = typeof companySkills.$inferSelect;
 type CompanySkillListDbRow = Pick<
@@ -1903,6 +1905,16 @@ export function companySkillService(db: Db) {
           updatedAt: new Date(),
         })
         .where(eq(companySkills.id, skill.id));
+
+      // Phase 1.19 T3 — re-embed on SKILL.md edit (vector search index).
+      // Best-effort: indexSkill swallows + logs errors so this never blocks
+      // the editor's save round-trip.
+      void indexSkill(db, companyId, skill.slug).catch((err) => {
+        logger.debug(
+          { err, companyId, skillSlug: skill.slug },
+          "company-skills: post-edit skill-index refresh failed (best-effort)",
+        );
+      });
     } else {
       await db
         .update(companySkills)
@@ -2370,7 +2382,22 @@ export function companySkillService(db: Db) {
           .returning()
           .then((rows) => rows[0] ?? null);
       if (!row) throw notFound("Failed to persist company skill");
-      out.push(toCompanySkill(row));
+      const persisted = toCompanySkill(row);
+      out.push(persisted);
+
+      // Phase 1.19 T3 — best-effort re-embed of SKILL.md content for the
+      // vector-indexed skill discovery (semantic search). Fire-and-forget so
+      // we never block skill imports on a Bedrock outage; indexSkill itself
+      // swallows errors and logs.
+      const markdownChanged = !existing || existing.markdown !== persisted.markdown;
+      if (markdownChanged) {
+        void indexSkill(db, companyId, persisted.slug).catch((err) => {
+          logger.debug(
+            { err, companyId, skillSlug: persisted.slug },
+            "company-skills: post-upsert skill-index refresh failed (best-effort)",
+          );
+        });
+      }
     }
     return out;
   }

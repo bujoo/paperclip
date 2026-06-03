@@ -674,6 +674,176 @@ async function applyAdoptedProposal(idm: IdmApprovalRow): Promise<{ kind: string
       );
       return { kind, ok: true, targetId };
     }
+    if (kind === "add-skill-to-role") {
+      const roleId = String(content.roleId ?? "");
+      const skillSlug = String(content.skillSlug ?? "");
+      const rationale = String(content.rationale ?? "");
+      const sourceTensionId = (content.sourceTensionId as string | undefined) ?? null;
+      if (!roleId || !skillSlug) {
+        return { kind, ok: false, reason: "Missing roleId or skillSlug" };
+      }
+      const roleRows = await dbCtx.query<{ id: string; circle_id: string; name: string; accountabilities: unknown }>(
+        `SELECT id, circle_id, name, accountabilities FROM ${tbl("roles")} WHERE id = $1`,
+        [roleId],
+      );
+      const role = roleRows[0];
+      if (!role) {
+        console.warn(`[holacracy] add-skill-to-role: role ${roleId} not found; skipping`);
+        return { kind, ok: false, reason: `Role ${roleId} not found` };
+      }
+      const existing = Array.isArray(role.accountabilities) ? (role.accountabilities as unknown[]).map(String) : [];
+      if (existing.includes(skillSlug)) {
+        if (activityCtx) {
+          await activityCtx.log({
+            companyId: idm.company_id,
+            message: `[holacracy] Skill "${skillSlug}" already present on role ${role.name} — no-op.`,
+            entityType: "role",
+            entityId: roleId,
+            metadata: { kind: "add-skill-to-role", roleId, skillSlug, idempotent: true, idmId: idm.id, sourceTensionId, rationale },
+          });
+        }
+        return { kind, ok: true, targetId: roleId };
+      }
+      const next = [...existing, skillSlug];
+      await dbCtx.execute(
+        `UPDATE ${tbl("roles")} SET accountabilities = $2::jsonb, updated_at = NOW() WHERE id = $1`,
+        [roleId, JSON.stringify(next)],
+      );
+      if (activityCtx) {
+        await activityCtx.log({
+          companyId: idm.company_id,
+          message: `[holacracy] Added skill "${skillSlug}" to role ${role.name} via IDM adoption.`,
+          entityType: "role",
+          entityId: roleId,
+          metadata: { kind: "add-skill-to-role", roleId, skillSlug, idmId: idm.id, sourceTensionId, rationale },
+        });
+      }
+      return { kind, ok: true, targetId: roleId };
+    }
+    if (kind === "create-role-with-skill") {
+      const circleId = String(content.circleId ?? idm.circle_id ?? "");
+      const proposedRoleName = String(content.proposedRoleName ?? "Untitled role");
+      const requiredSkills = Array.isArray(content.requiredSkills)
+        ? (content.requiredSkills as unknown[]).map(String)
+        : [];
+      const proposedAgentName = (content.proposedAgentName as string | undefined) ?? null;
+      const rationale = String(content.rationale ?? "");
+      if (!circleId) {
+        return { kind, ok: false, reason: "Missing circleId" };
+      }
+      const circleRows = await dbCtx.query<{ id: string }>(
+        `SELECT id FROM ${tbl("circles")} WHERE id = $1`,
+        [circleId],
+      );
+      if (!circleRows[0]) {
+        console.warn(`[holacracy] create-role-with-skill: circle ${circleId} not found; skipping`);
+        return { kind, ok: false, reason: `Circle ${circleId} not found` };
+      }
+      const targetId = randomUUID();
+      await dbCtx.execute(
+        `INSERT INTO ${tbl("roles")} (id, circle_id, name, role_type, accountabilities) VALUES ($1, $2, $3, $4, $5::jsonb)`,
+        [targetId, circleId, proposedRoleName, "custom", JSON.stringify(requiredSkills)],
+      );
+      if (activityCtx) {
+        await activityCtx.log({
+          companyId: idm.company_id,
+          message: `[holacracy] Created role "${proposedRoleName}" in circle ${circleId} with ${requiredSkills.length} required skill(s) via IDM adoption.`,
+          entityType: "role",
+          entityId: targetId,
+          metadata: { kind: "create-role-with-skill", roleId: targetId, circleId, requiredSkills, idmId: idm.id, rationale },
+        });
+        if (proposedAgentName) {
+          await activityCtx.log({
+            companyId: idm.company_id,
+            message: `[holacracy] Recommendation: onboard a new agent "${proposedAgentName}" to fill role "${proposedRoleName}" (requires human approval).`,
+            entityType: "role",
+            entityId: targetId,
+            metadata: { kind: "create-role-with-skill:onboarding-recommendation", roleId: targetId, proposedAgentName, requiredSkills, idmId: idm.id },
+          });
+        }
+      }
+      return { kind, ok: true, targetId };
+    }
+    if (kind === "reassign-role") {
+      const roleId = String(content.roleId ?? "");
+      const fromAgentId = String(content.fromAgentId ?? "");
+      const toAgentId = String(content.toAgentId ?? "");
+      const rationale = String(content.rationale ?? "");
+      if (!roleId || !fromAgentId || !toAgentId) {
+        return { kind, ok: false, reason: "Missing roleId, fromAgentId, or toAgentId" };
+      }
+      const existing = await dbCtx.query<{ id: string }>(
+        `SELECT id FROM ${tbl("role_assignments")} WHERE role_id = $1 AND agent_id = $2`,
+        [roleId, fromAgentId],
+      );
+      if (!existing[0]) {
+        console.warn(`[holacracy] reassign-role: no assignment for role ${roleId} + agent ${fromAgentId}; skipping`);
+        return { kind, ok: false, reason: `No assignment found for role ${roleId} + agent ${fromAgentId}` };
+      }
+      await dbCtx.execute(
+        `UPDATE ${tbl("role_assignments")} SET agent_id = $3 WHERE role_id = $1 AND agent_id = $2`,
+        [roleId, fromAgentId, toAgentId],
+      );
+      if (activityCtx) {
+        await activityCtx.log({
+          companyId: idm.company_id,
+          message: `[holacracy] Reassigned role ${roleId} from agent ${fromAgentId} to agent ${toAgentId} via IDM adoption.`,
+          entityType: "role",
+          entityId: roleId,
+          metadata: { kind: "reassign-role", roleId, fromAgentId, toAgentId, idmId: idm.id, rationale },
+        });
+      }
+      return { kind, ok: true, targetId: roleId };
+    }
+    if (kind === "reformulate-task") {
+      const taskId = String(content.taskId ?? "");
+      const originalProposerAgentId = String(content.originalProposerAgentId ?? "");
+      const clarifyingQuestions = Array.isArray(content.clarifyingQuestions)
+        ? (content.clarifyingQuestions as unknown[]).map(String)
+        : [];
+      if (!taskId || clarifyingQuestions.length === 0) {
+        return { kind, ok: false, reason: "Missing taskId or clarifyingQuestions" };
+      }
+      const issueRows = await dbCtx.query<{ id: string; company_id: string }>(
+        `SELECT id, company_id FROM public.issues WHERE id = $1`,
+        [taskId],
+      );
+      const issue = issueRows[0];
+      if (!issue) {
+        console.warn(`[holacracy] reformulate-task: issue ${taskId} not found; skipping`);
+        return { kind, ok: false, reason: `Issue ${taskId} not found` };
+      }
+      const interactionId = randomUUID();
+      await dbCtx.execute(
+        `INSERT INTO public.issue_thread_interactions
+           (id, company_id, issue_id, kind, status, continuation_policy, payload, created_by_agent_id)
+         VALUES ($1, $2, $3, 'ask_user_questions', 'pending', 'wake_assignee', $4::jsonb, $5)`,
+        [
+          interactionId,
+          issue.company_id,
+          taskId,
+          JSON.stringify({ questions: clarifyingQuestions }),
+          originalProposerAgentId || null,
+        ],
+      );
+      if (activityCtx) {
+        await activityCtx.log({
+          companyId: idm.company_id,
+          message: `[holacracy] Reformulate-task: posted ${clarifyingQuestions.length} clarifying question(s) on issue ${taskId} to wake original proposer.`,
+          entityType: "issue",
+          entityId: taskId,
+          metadata: {
+            kind: "reformulate-task",
+            taskId,
+            originalProposerAgentId,
+            interactionId,
+            questionCount: clarifyingQuestions.length,
+            idmId: idm.id,
+          },
+        });
+      }
+      return { kind, ok: true, targetId: interactionId };
+    }
     return { kind: kind || "unknown", ok: false, reason: `No dispatcher for proposal.kind="${kind}"` };
   } catch (err) {
     return { kind, ok: false, reason: err instanceof Error ? err.message : String(err) };

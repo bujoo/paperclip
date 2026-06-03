@@ -58,6 +58,7 @@ const manifest: PaperclipPluginManifestV1 = {
       "circle_discussions",
       "discussion_commitments",
       "agent_trust_signals",
+      "projects",
     ],
   },
   apiRoutes: [

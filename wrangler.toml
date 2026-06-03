@@ -1,0 +1,13 @@
+# CloudFlare Wrangler configuration for documentation site
+
+name = "contexthub-docs"
+type = "javascript"
+
+[env.production]
+route = "docs.contexthub.internal/*"
+zone_id = ""
+
+[[env.production.routes]]
+pattern = "docs.contexthub.internal/*"
+zone_name = "contexthub.internal"
+custom_domain = true

@@ -1193,5 +1193,72 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
           },
         }),
     ),
+
+    // T4 (Phase 1.19 B-set) — trust-thresholded skill awareness.
+    makeTool(
+      "agentCheckSkillFit",
+      "Check if an agent has the skills needed for a task. Returns per-skill trust scores + suggested alternative agents. Call this BEFORE accepting an assigned task; if any skill is below threshold (0.7) and you're outside the 14-day grace window, use agentDeclineTask with declineKind='skill-trust-below-threshold'. Required skills can be passed explicitly; otherwise the server infers up to 3 via semantic search.",
+      z.object({
+        taskDescription: z.string().min(1),
+        candidateAgentId: z.string().uuid().optional(),
+        requiredSkills: z.array(z.string().min(1)).optional(),
+        companyId: companyIdOptional,
+      }),
+      async ({ taskDescription, candidateAgentId, requiredSkills, companyId }) =>
+        client.requestJson("POST", "/internal/skill-fit/check", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            taskDescription,
+            ...(candidateAgentId ? { candidateAgentId } : {}),
+            ...(requiredSkills && requiredSkills.length > 0 ? { requiredSkills } : {}),
+          },
+        }),
+    ),
+
+    makeTool(
+      "agentDeclineTask",
+      "Decline an assigned task with one of three declineKinds: 'skill-trust-below-threshold' (marks blocked + raises a tension to the Lead Link), 'scope-ambiguous' (creates an ask_user_questions interaction with clarifyingQuestions[] + marks blocked), or 'wrong-role' (clears assignee for Lead Link routing). Use after agentCheckSkillFit indicates you don't meet the trust threshold and grace doesn't apply.",
+      z.object({
+        taskId: z.string().uuid(),
+        declineKind: z.enum(["skill-trust-below-threshold", "scope-ambiguous", "wrong-role"]),
+        trustScore: z.number().min(0).max(1).optional(),
+        missingSkills: z.array(z.string().min(1)).optional(),
+        clarifyingQuestions: z.array(z.string().min(1)).optional(),
+        companyId: companyIdOptional,
+      }),
+      async ({ taskId, declineKind, trustScore, missingSkills, clarifyingQuestions, companyId }) =>
+        client.requestJson("POST", "/internal/a2a/decline", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            taskId,
+            declineKind,
+            ...(trustScore !== undefined ? { trustScore } : {}),
+            ...(missingSkills && missingSkills.length > 0 ? { missingSkills } : {}),
+            ...(clarifyingQuestions && clarifyingQuestions.length > 0
+              ? { clarifyingQuestions }
+              : {}),
+          },
+        }),
+    ),
+
+    makeTool(
+      "endorseAgent",
+      "Endorse another agent for a skill — boosts their trust floor from cold-start (0.5) to 0.65 for that skill. Caller must already be at trust >= 0.85 on the same skill (the server enforces this). Use sparingly: one row per (you, target, skill); subsequent calls update the rationale.",
+      z.object({
+        targetAgentId: z.string().uuid(),
+        skillSlug: z.string().min(1),
+        rationale: z.string().min(1).max(2000),
+        companyId: companyIdOptional,
+      }),
+      async ({ targetAgentId, skillSlug, rationale, companyId }) =>
+        client.requestJson("POST", "/internal/a2a/endorse", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            targetAgentId,
+            skillSlug,
+            rationale,
+          },
+        }),
+    ),
   ];
 }

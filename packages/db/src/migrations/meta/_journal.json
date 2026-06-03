@@ -645,6 +645,13 @@
       "when": 1780618900000,
       "tag": "0091_idm_integration_counter",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1780619000000,
+      "tag": "0092_issues_required_skills",
+      "breakpoints": true
     }
   ]
 }

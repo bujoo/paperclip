@@ -46,6 +46,10 @@ export const issues = pgTable(
     originId: text("origin_id"),
     originRunId: text("origin_run_id"),
     originFingerprint: text("origin_fingerprint").notNull().default("default"),
+    // T2 (Phase 1.19 A-set) — skill slugs this task needs. Agents check
+    // before accepting via agentCheckSkillFit; missing/below-threshold
+    // skills trigger agentDeclineTask routing to governance.
+    requiredSkills: text("required_skills").array().notNull().default(sql`'{}'::text[]`),
     // Phase 1.10 — when an inbound MQTT message materialises as an issue, the
     // runtime bridge records the delivery topic so the agent (and audit) can
     // tell which addressing dimension the work came in on (personal direct,

@@ -1478,6 +1478,7 @@ const issueListSelect = {
   originRunId: issues.originRunId,
   originFingerprint: issues.originFingerprint,
   originTopic: issues.originTopic,
+  requiredSkills: issues.requiredSkills,
   a2aContextId: issues.a2aContextId,
   requestDepth: issues.requestDepth,
   billingCode: issues.billingCode,

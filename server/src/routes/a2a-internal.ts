@@ -53,6 +53,7 @@ import {
   encodeEndorsementAuthor,
 } from "../services/trust-score.js";
 import { logActivity } from "../services/activity-log.js";
+import { issueService } from "../services/issues.js";
 import type { PluginToolDispatcher } from "../services/plugin-tool-dispatcher.js";
 
 const HOLACRACY_RAISE_TENSION_TOOL =
@@ -1037,6 +1038,164 @@ export function a2aInternalRoutes(db: Db, deps: A2aInternalDeps = {}) {
         endorsedTrustScore: endorsedTrustScore.score,
         endorsedBy: endorsedTrustScore.endorsedBy,
         basedOn: endorsedTrustScore.basedOn,
+      });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  /**
+   * POST /api/internal/a2a/delegate — T5 + T6 (Phase 1.18 I2 + 1.19 E-set).
+   *
+   * Peer-delegation primitive. An agent files a `next_action` issue for
+   * another agent in the same company with `origin_kind='peer_delegation'`.
+   *
+   * Skill-fit gate (T6): if `requiredSkills[]` is provided, each is
+   * trust-checked against the target via `agentTrustScore`. If any skill
+   * is below threshold (and target is past 14-day grace), the delegation
+   * is refused with 409 and a structural tension is auto-raised on the
+   * target's primary circle (Lead Link can propose add-skill-to-role,
+   * reassign-role, or create-role-with-skill via IDM C-set).
+   *
+   * Consent semantics: the receiver gets the issue assigned to them. They
+   * either do it (implicit accept) OR invoke `agentDeclineTask` (explicit
+   * decline) — same primitive they'd use for any orchestrated task.
+   *
+   * Body: { companyId, toAgentId, title, description?, requiredSkills?, urgency? }
+   */
+  router.post("/internal/a2a/delegate", async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const companyId = requireString(body, "companyId");
+      const toAgentId = requireString(body, "toAgentId");
+      const title = requireString(body, "title");
+      const description = optionalString(body, "description");
+      const urgency = optionalString(body, "urgency");
+      const requiredSkillsRaw = body.requiredSkills;
+      const requiredSkills = Array.isArray(requiredSkillsRaw)
+        ? requiredSkillsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        : [];
+
+      const requester = await resolveRequester(db, req, companyId);
+      if (toAgentId === requester.agentId) {
+        throw { status: 400, code: "SELF_DELEGATION", message: "Cannot delegate to yourself" };
+      }
+
+      // T6 — skill-fit gate. Check each required skill against target's trust.
+      if (requiredSkills.length > 0) {
+        const fits: Array<{ skill: string; score: number; isInGrace: boolean }> = [];
+        const misses: Array<{ skill: string; score: number }> = [];
+        for (const skill of requiredSkills) {
+          const ts = await agentTrustScore(db, toAgentId, skill);
+          if (ts.score >= TRUST_THRESHOLD || ts.isInGrace) {
+            fits.push({ skill, score: ts.score, isInGrace: ts.isInGrace });
+          } else {
+            misses.push({ skill, score: ts.score });
+          }
+        }
+        if (misses.length > 0) {
+          // Auto-raise structural tension on target's primary circle so the
+          // Lead Link can propose add-skill-to-role / reassign / create-role.
+          const targetCircle = await resolvePrimaryCircle(db, toAgentId);
+          let tensionRaised = false;
+          if (deps.toolDispatcher && targetCircle) {
+            try {
+              const tool = deps.toolDispatcher.getTool(HOLACRACY_RAISE_TENSION_TOOL);
+              if (tool) {
+                const missText = misses
+                  .map((m) => `${m.skill} (trust=${m.score.toFixed(2)})`)
+                  .join(", ");
+                await deps.toolDispatcher.executeTool(
+                  HOLACRACY_RAISE_TENSION_TOOL,
+                  {
+                    circleId: targetCircle,
+                    title: `Skill-gap on delegation refusal: ${title}`,
+                    body:
+                      `Agent ${requester.agentId} tried to delegate "${title}" to ${toAgentId} ` +
+                      `but the target's trust is below ${TRUST_THRESHOLD} on: ${missText}. ` +
+                      `Required skills: ${requiredSkills.join(", ")}. ` +
+                      `Lead Link: propose add-skill-to-role (educate), reassign-role (route to qualified peer), ` +
+                      `or create-role-with-skill (hire). All available as IDM proposal kinds.`,
+                    severity: "medium",
+                  },
+                  buildRunContext(requester),
+                );
+                tensionRaised = true;
+              }
+            } catch (err) {
+              logger.warn(
+                { err, toAgentId, targetCircle },
+                "/delegate: structural tension raise failed",
+              );
+            }
+          }
+          res.status(409).json({
+            ok: false,
+            code: "SKILL_FIT_DECLINED",
+            message: "Target agent below trust threshold for required skill(s)",
+            fits,
+            misses,
+            tensionRaised,
+          });
+          return;
+        }
+      }
+
+      // Resolve a project for the issue — prefer target's circle root project.
+      const targetCircle = await resolvePrimaryCircle(db, toAgentId);
+      let projectId: string | null = null;
+      if (targetCircle) {
+        const projRows = await db.execute<{ project_id: string }>(sql`
+          SELECT project_id::text AS project_id
+            FROM plugin_holacracy_c5049b5dfe.circles
+           WHERE id = ${targetCircle}::uuid AND project_id IS NOT NULL
+           LIMIT 1
+        `);
+        const projList = Array.isArray(projRows)
+          ? projRows
+          : (projRows as unknown as { rows?: typeof projRows }).rows ?? [];
+        projectId = (projList as Array<{ project_id: string }>)[0]?.project_id ?? null;
+      }
+      if (!projectId) projectId = requester.projectId;
+
+      const issues = issueService(db);
+      const created = await issues.create(companyId, {
+        title,
+        description: description ?? null,
+        kind: "next_action",
+        assigneeAgentId: toAgentId,
+        projectId,
+        originKind: "peer_delegation",
+        originId: requester.agentId,
+        originRunId: requester.runId,
+        requiredSkills,
+        status: "todo",
+      });
+
+      await logActivity(db, {
+        companyId,
+        actorType: "agent",
+        actorId: requester.agentId,
+        agentId: requester.agentId,
+        action: "agent.delegated",
+        entityType: "issue",
+        entityId: created.id,
+        details: {
+          toAgentId,
+          title,
+          requiredSkills,
+          ...(urgency ? { urgency } : {}),
+        },
+      }).catch((err) => {
+        logger.debug({ err }, "/delegate: activity log failed");
+      });
+
+      res.status(200).json({
+        ok: true,
+        issueId: created.id,
+        assigneeAgentId: toAgentId,
+        requiredSkills,
+        originKind: "peer_delegation",
       });
     } catch (err) {
       sendError(res, err);

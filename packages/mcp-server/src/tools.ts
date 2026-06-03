@@ -1260,5 +1260,29 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
           },
         }),
     ),
+
+    makeTool(
+      "agentDelegateTask",
+      "Delegate a task to a peer agent. Creates a `next_action` issue assigned to them with `origin_kind='peer_delegation'`. If `requiredSkills` are listed, the server checks each against the target's trust score — if any are below threshold (and target is past 14-day grace), the delegation is refused with 409 + an automatic structural tension is raised on the target's circle (Lead Link can then propose add-skill-to-role / reassign-role / create-role-with-skill via IDM). Use this when you sense work that belongs to a peer's role accountability — don't do their work, route it. Use `agentSemanticSkillSearch` first if you don't know the right target.",
+      z.object({
+        toAgentId: z.string().uuid(),
+        title: z.string().min(1).max(240),
+        description: z.string().max(50000).optional(),
+        requiredSkills: z.array(z.string().min(1)).optional(),
+        urgency: z.enum(["low", "medium", "high"]).optional(),
+        companyId: companyIdOptional,
+      }),
+      async ({ toAgentId, title, description, requiredSkills, urgency, companyId }) =>
+        client.requestJson("POST", "/internal/a2a/delegate", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            toAgentId,
+            title,
+            ...(description ? { description } : {}),
+            ...(requiredSkills && requiredSkills.length > 0 ? { requiredSkills } : {}),
+            ...(urgency ? { urgency } : {}),
+          },
+        }),
+    ),
   ];
 }

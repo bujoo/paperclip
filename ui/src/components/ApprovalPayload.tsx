@@ -1,4 +1,6 @@
 import { UserPlus, Lightbulb, ShieldAlert, ShieldCheck } from "lucide-react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { formatCents } from "../lib/utils";
 
 export const typeLabel: Record<string, string> = {
@@ -17,12 +19,32 @@ function firstNonEmptyString(...values: unknown[]): string | null {
   return null;
 }
 
+/**
+ * Auto-created governance approvals (from `holacracy-raise-tension` with
+ * `type='governance'`) nest the human-readable fields under
+ * `payload.governance_proposal`. Flatten so the regular accessors find them.
+ */
+function flattenGovernanceProposal(
+  payload?: Record<string, unknown> | null,
+): Record<string, unknown> {
+  if (!payload) return {};
+  const proposal = payload.governance_proposal;
+  if (!proposal || typeof proposal !== "object") return payload;
+  return {
+    ...payload,
+    title: payload.title ?? (proposal as Record<string, unknown>).title,
+    summary: payload.summary ?? (proposal as Record<string, unknown>).description,
+    tensionId: (proposal as Record<string, unknown>).tension_id,
+  };
+}
+
 export function approvalSubject(payload?: Record<string, unknown> | null): string | null {
+  const flat = flattenGovernanceProposal(payload);
   return firstNonEmptyString(
-    payload?.title,
-    payload?.name,
-    payload?.summary,
-    payload?.recommendedAction,
+    flat.title,
+    flat.name,
+    flat.summary,
+    flat.recommendedAction,
   );
 }
 
@@ -162,17 +184,19 @@ export function BoardApprovalPayload({
 }
 
 function BoardApprovalPayloadContent({ payload }: { payload: Record<string, unknown> }) {
-  const risks = Array.isArray(payload.risks)
-    ? payload.risks
+  const flat = flattenGovernanceProposal(payload);
+  const risks = Array.isArray(flat.risks)
+    ? (flat.risks as unknown[])
         .filter((value): value is string => typeof value === "string")
         .map((value) => value.trim())
         .filter(Boolean)
     : [];
-  const title = firstNonEmptyString(payload.title);
-  const summary = firstNonEmptyString(payload.summary);
-  const recommendedAction = firstNonEmptyString(payload.recommendedAction);
-  const nextActionOnApproval = firstNonEmptyString(payload.nextActionOnApproval);
-  const proposedComment = firstNonEmptyString(payload.proposedComment);
+  const title = firstNonEmptyString(flat.title);
+  const summary = firstNonEmptyString(flat.summary);
+  const recommendedAction = firstNonEmptyString(flat.recommendedAction);
+  const nextActionOnApproval = firstNonEmptyString(flat.nextActionOnApproval);
+  const proposedComment = firstNonEmptyString(flat.proposedComment);
+  const tensionId = firstNonEmptyString(flat.tensionId);
 
   return (
     <div className="mt-4 space-y-3.5 text-sm">
@@ -185,7 +209,9 @@ function BoardApprovalPayloadContent({ payload }: { payload: Record<string, unkn
       {summary && (
         <div className="space-y-1">
           <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Summary</p>
-          <p className="leading-6 text-foreground/90">{summary}</p>
+          <div className="text-foreground/90 leading-6 prose prose-sm dark:prose-invert max-w-none">
+            <Markdown remarkPlugins={[remarkGfm]}>{summary}</Markdown>
+          </div>
         </div>
       )}
       {recommendedAction && (
@@ -224,6 +250,11 @@ function BoardApprovalPayloadContent({ payload }: { payload: Record<string, unkn
             {proposedComment}
           </pre>
         </div>
+      )}
+      {tensionId && (
+        <p className="text-xs text-muted-foreground">
+          Source tension: <span className="font-mono">{tensionId}</span>
+        </p>
       )}
     </div>
   );

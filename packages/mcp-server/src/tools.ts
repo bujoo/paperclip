@@ -1175,5 +1175,23 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         );
       },
     ),
+
+    makeTool(
+      "agentSemanticSkillSearch",
+      "Find skills semantically matching a task description. Returns top-K skill candidates + which agents hold them + trust scores. Use this BEFORE agentDelegateTask to find the right peer for a task; or when you're trying to figure out which skill a task needs.",
+      z.object({
+        taskDescription: z.string().min(1),
+        topK: z.number().int().min(1).max(20).optional(),
+        companyId: companyIdOptional,
+      }),
+      async ({ taskDescription, topK, companyId }) =>
+        client.requestJson("POST", "/internal/skill-index/search", {
+          body: {
+            companyId: client.resolveCompanyId(companyId),
+            query: taskDescription,
+            topK: topK ?? 5,
+          },
+        }),
+    ),
   ];
 }

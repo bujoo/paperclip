@@ -38,6 +38,10 @@ import * as perAgentClientManager from "../mqtt/per-agent-client-manager.js";
 import { logger } from "../middleware/logger.js";
 import { resolveRequester } from "./holacracy-bridge.js";
 import { upsertTrustSignal } from "../services/trust-signals.js";
+import {
+  semanticSkillSearch,
+  findCandidateAgentsForSkill,
+} from "../services/skill-index.js";
 
 interface ErrorShape {
   status: number;
@@ -398,6 +402,59 @@ export function a2aInternalRoutes(db: Db) {
       res.status(200).json(data);
     } catch (err) {
       logger.warn({ err }, "GET /internal/a2a/agents failed");
+      sendError(res, err);
+    }
+  });
+
+  /**
+   * POST /api/internal/skill-index/search — semantic skill discovery.
+   *
+   * Body: { companyId, query, topK? } (topK defaults to 5).
+   *
+   * Returns top-K SKILL.md chunks whose vector embeddings (Bedrock
+   * Cohere) most closely match the query. Each result is enriched with
+   * candidate agents (those whose role accountabilities mention the
+   * skill slug) and their aggregate trust scores. Use this BEFORE
+   * a2aSendTask to find the right peer for a task.
+   */
+  router.post("/internal/skill-index/search", async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const companyId = requireString(body, "companyId");
+      const query = requireString(body, "query");
+      const topKRaw = body.topK;
+      const topK = typeof topKRaw === "number" && Number.isFinite(topKRaw) && topKRaw > 0
+        ? Math.min(20, Math.floor(topKRaw))
+        : 5;
+
+      // Auth: same per-agent gate as the other internal endpoints.
+      await resolveRequester(db, req, companyId);
+
+      const matches = await semanticSkillSearch(db, companyId, query, topK);
+
+      // Deduplicate candidate-agent lookups by skillSlug (multiple chunks
+      // from the same skill share the same candidate pool).
+      const candidatesBySlug = new Map<string, Awaited<ReturnType<typeof findCandidateAgentsForSkill>>>();
+      for (const match of matches) {
+        if (candidatesBySlug.has(match.skillSlug)) continue;
+        candidatesBySlug.set(
+          match.skillSlug,
+          await findCandidateAgentsForSkill(db, companyId, match.skillSlug),
+        );
+      }
+
+      const results = matches.map((match) => ({
+        skillId: match.skillId,
+        skillSlug: match.skillSlug,
+        skillName: match.skillName,
+        chunkIndex: match.chunkIndex,
+        chunkText: match.chunkText,
+        semanticDistance: match.semanticDistance,
+        candidateAgents: candidatesBySlug.get(match.skillSlug) ?? [],
+      }));
+
+      res.status(200).json({ results });
+    } catch (err) {
       sendError(res, err);
     }
   });

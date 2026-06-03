@@ -7708,14 +7708,66 @@ ${policyList || "No policies defined yet."}
         const circleId = input.params.circleId as string;
         const { title, description, type: tensionType } = input.body as { title: string; description?: string; type?: string; companyId: string };
         if (!title) return { status: 400, body: { error: "title is required" } };
+
+        // G4 — Governance/tactical meeting separation. If a governance
+        // tension is raised by an agent who is currently inside an active
+        // tactical discussion (meeting_kind='tactical'), refuse with a
+        // structured pointer to the next governance meeting. This is the
+        // SAME gate as the TOOL_NAMES.raiseTension handler; both paths
+        // (tool + API route) must enforce it.
+        if (tensionType === "governance" && input.actor?.agentId) {
+          const activeTactical = await dbCtx!.query<{
+            id: string;
+            phase: string;
+          }>(
+            `SELECT id, phase
+               FROM public.circle_discussions
+              WHERE circle_id = $1
+                AND status = 'in_progress'
+                AND meeting_kind = 'tactical'
+                AND $2::uuid = ANY(participant_agent_ids)
+              ORDER BY started_at DESC NULLS LAST
+              LIMIT 1`,
+            [circleId, input.actor?.agentId],
+          );
+          if (activeTactical.length > 0) {
+            const nextGov = await dbCtx!.query<{ id: string; started_at: string | null }>(
+              `SELECT id, started_at
+                 FROM public.circle_discussions
+                WHERE circle_id = $1
+                  AND meeting_kind = 'governance'
+                  AND status IN ('scheduled','in_progress','pending')
+                ORDER BY started_at ASC NULLS LAST
+                LIMIT 1`,
+              [circleId],
+            );
+            const nextGovMeeting =
+              nextGov.length > 0
+                ? { discussionId: nextGov[0].id, scheduledAt: nextGov[0].started_at }
+                : null;
+            return {
+              status: 403,
+              body: {
+                code: "PHASE_MISMATCH",
+                error:
+                  "Governance tensions cannot be raised inside a tactical discussion. " +
+                  "Hold the tension for the next governance meeting, or ask the " +
+                  "Facilitator to schedule one.",
+                tacticalDiscussionId: activeTactical[0].id,
+                nextGovernanceMeeting: nextGovMeeting,
+              },
+            };
+          }
+        }
+
         const id = randomUUID();
         await dbCtx!.execute(
           `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type) VALUES ($1, $2, $3, $4, $5, $6)`,
-          [id, circleId, null, title, description ?? null, tensionType ?? "operational"],
+          [id, circleId, input.actor?.agentId ?? null, title, description ?? null, tensionType ?? "operational"],
         );
         await dbCtx!.execute(
           `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ($1, $2, $3, 'tension-raised', $4)`,
-          [input.companyId, null, circleId, JSON.stringify({ tensionId: id, title, type: tensionType ?? "operational" })],
+          [input.companyId, input.actor?.agentId ?? null, circleId, JSON.stringify({ tensionId: id, title, type: tensionType ?? "operational" })],
         );
 
         // Trigger A: governance tension → auto-create 3-of-3 async approval

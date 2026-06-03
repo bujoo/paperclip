@@ -1829,7 +1829,13 @@ export function pluginLoader(
       // ------------------------------------------------------------------
       const toolDeclarations = manifest.tools ?? [];
       if (toolDeclarations.length > 0) {
-        toolDispatcher.registerPluginTools(pluginKey, manifest);
+        // Pass the plugin DB UUID so the tool dispatcher can route
+        // worker-availability checks (workerManager.isRunning) by UUID,
+        // which is how the worker map is keyed. Without this, fallback
+        // was pluginKey-as-UUID and isRunning always returned false →
+        // every tool call rejected with "worker not running" even when
+        // the worker was alive and processing scheduled jobs fine.
+        toolDispatcher.registerPluginTools(pluginKey, manifest, pluginId);
         registered.tools = toolDeclarations.length;
 
         log.info(

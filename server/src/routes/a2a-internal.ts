@@ -37,6 +37,7 @@ import {
 import * as perAgentClientManager from "../mqtt/per-agent-client-manager.js";
 import { logger } from "../middleware/logger.js";
 import { resolveRequester } from "./holacracy-bridge.js";
+import { upsertTrustSignal } from "../services/trust-signals.js";
 
 interface ErrorShape {
   status: number;
@@ -244,6 +245,11 @@ export function a2aInternalRoutes(db: Db) {
       }
 
       let targetRequestTopic: string;
+      // T1 — directTargetAgentId is set only for kind==="agent"; pool dispatch
+      // resolves the responder after the fact (via a2a-responder-agent-id user
+      // property on the reply). For trust-signal writes we only credit/debit
+      // when we know the specific target.
+      let directTargetAgentId: string | null = null;
       switch (kind) {
         case "agent": {
           const toAgentId = requireString(body, "toAgentId");
@@ -256,6 +262,7 @@ export function a2aInternalRoutes(db: Db) {
             };
           }
           targetRequestTopic = requestTopic(companyId, targetCircle, toAgentId);
+          directTargetAgentId = toAgentId;
           break;
         }
         case "role-pool": {
@@ -311,6 +318,17 @@ export function a2aInternalRoutes(db: Db) {
             ...extraUserProperties,
           },
         });
+        // T1 — record successful trust signal (I1 regression fix).
+        // For directed (kind="agent") requests, the responder is known;
+        // credit them. For pool dispatch, the responder MAY be carried in
+        // a2a-responder-agent-id user property on the reply — use that
+        // when present.
+        const respondedByFromUserProps = reply.userProperties?.["a2a-responder-agent-id"];
+        const responderAgentId = directTargetAgentId
+          ?? (typeof respondedByFromUserProps === "string" ? respondedByFromUserProps : null);
+        if (responderAgentId) {
+          await upsertTrustSignal(db, requester.agentId, responderAgentId, "general", true);
+        }
         res.status(200).json({
           taskId,
           contextId: contextId ?? taskId,
@@ -323,6 +341,12 @@ export function a2aInternalRoutes(db: Db) {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.toLowerCase().includes("timeout") || message.toLowerCase().includes("timed out")) {
+          // T1 — record failed trust signal on timeout (I1 regression fix).
+          // Only when we know the specific target (directed kind="agent");
+          // pool dispatch timeouts don't have a single agent to debit.
+          if (directTargetAgentId) {
+            await upsertTrustSignal(db, requester.agentId, directTargetAgentId, "general", false);
+          }
           res.status(200).json({
             taskId,
             contextId: contextId ?? taskId,

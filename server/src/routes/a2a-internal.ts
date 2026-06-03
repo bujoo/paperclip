@@ -155,6 +155,43 @@ async function resolvePrimaryCircle(db: Db, agentId: string): Promise<string | n
   }
 }
 
+/**
+ * Resolve every (circle_id, role_type, is_anchor) tuple an agent holds.
+ * Used by G2's cross-circle delegation gate.
+ *
+ * - `is_anchor` is true when the role's circle has `parent_circle_id IS NULL`
+ *   (the company's anchor circle, e.g., "General Company Circle"). Robertson's
+ *   constitution treats the anchor circle as holding the org-wide purpose, so
+ *   roles in the anchor are structurally cross-circle.
+ */
+async function resolveAgentCircleMemberships(
+  db: Db,
+  agentId: string,
+): Promise<Array<{ circleId: string; roleType: string; isAnchor: boolean }>> {
+  try {
+    const rows = await db.execute<{
+      circle_id: string;
+      role_type: string;
+      is_anchor: boolean;
+    }>(sql.raw(`
+      SELECT r.circle_id::text AS circle_id,
+             r.role_type::text  AS role_type,
+             (ci.parent_circle_id IS NULL) AS is_anchor
+        FROM plugin_holacracy_c5049b5dfe.role_assignments ra
+        JOIN plugin_holacracy_c5049b5dfe.roles      r  ON r.id  = ra.role_id
+        JOIN plugin_holacracy_c5049b5dfe.circles    ci ON ci.id = r.circle_id
+       WHERE ra.agent_id = '${agentId}'::uuid
+    `));
+    const list = Array.isArray(rows) ? rows : (rows as unknown as { rows?: typeof rows }).rows ?? [];
+    return (list as Array<{ circle_id: string; role_type: string; is_anchor: boolean }>).map(
+      (r) => ({ circleId: r.circle_id, roleType: r.role_type, isAnchor: r.is_anchor }),
+    );
+  } catch (err) {
+    logger.debug({ err, agentId }, "a2a-internal: circle-memberships lookup failed");
+    return [];
+  }
+}
+
 type PublishKind = "event-self" | "event-circle" | "role-broadcast" | "skill-broadcast";
 type RequestKind = "agent" | "role-pool" | "skill-pool";
 
@@ -1071,14 +1108,100 @@ export function a2aInternalRoutes(db: Db, deps: A2aInternalDeps = {}) {
       const title = requireString(body, "title");
       const description = optionalString(body, "description");
       const urgency = optionalString(body, "urgency");
+      const sourceIssueId = optionalString(body, "sourceIssueId");
       const requiredSkillsRaw = body.requiredSkills;
-      const requiredSkills = Array.isArray(requiredSkillsRaw)
+      let requiredSkills = Array.isArray(requiredSkillsRaw)
         ? requiredSkillsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
         : [];
 
       const requester = await resolveRequester(db, req, companyId);
       if (toAgentId === requester.agentId) {
         throw { status: 400, code: "SELF_DELEGATION", message: "Cannot delegate to yourself" };
+      }
+
+      // G1 — when caller omits requiredSkills but names a source issue,
+      // inherit the source issue's required_skills so the T6 skill-fit gate
+      // runs correctly instead of being silently bypassed.
+      if (requiredSkills.length === 0 && sourceIssueId) {
+        try {
+          const rows = await db.execute<{ required_skills: string[] | null }>(sql`
+            SELECT required_skills FROM public.issues
+             WHERE id = ${sourceIssueId}::uuid AND company_id = ${companyId}::uuid
+             LIMIT 1
+          `);
+          const list = Array.isArray(rows)
+            ? rows
+            : (rows as unknown as { rows?: typeof rows }).rows ?? [];
+          const inherited = (list as Array<{ required_skills: string[] | null }>)[0]?.required_skills;
+          if (Array.isArray(inherited) && inherited.length > 0) {
+            requiredSkills = inherited.filter(
+              (s): s is string => typeof s === "string" && s.trim().length > 0,
+            );
+          }
+        } catch (err) {
+          logger.debug({ err, sourceIssueId }, "/delegate: source-issue inheritance failed");
+        }
+      }
+
+      // G2 — Cross-circle delegation gate (Phase 1.20).
+      //
+      // Robertson's constitution: peer routing is *within* a circle.
+      // Cross-circle work goes via Cross-Links or up-then-down via Rep Links.
+      // Allow:
+      //   (a) caller + target share ≥1 circle, OR
+      //   (b) target holds a role in the anchor circle (parent_circle_id IS NULL) —
+      //       the anchor circle's roles hold org-wide purpose by definition, so
+      //       roles there are structurally cross-circle (Holacracy Coach lives here).
+      //   (c) (future-proof) target's role_type ∈ ('cross_link','coach') — neither
+      //       exists in the current schema, but the check is cheap and forward-compatible.
+      const [callerMemberships, targetMemberships] = await Promise.all([
+        resolveAgentCircleMemberships(db, requester.agentId),
+        resolveAgentCircleMemberships(db, toAgentId),
+      ]);
+      const callerCircles = new Set(callerMemberships.map((m) => m.circleId));
+      const targetCircles = new Set(targetMemberships.map((m) => m.circleId));
+      const sharedCircles = [...callerCircles].filter((c) => targetCircles.has(c));
+      const targetHasAnchorRole = targetMemberships.some((m) => m.isAnchor);
+      const targetHasCrossLinkRole = targetMemberships.some((m) =>
+        ["cross_link", "coach"].includes(m.roleType),
+      );
+
+      if (sharedCircles.length === 0 && !targetHasAnchorRole && !targetHasCrossLinkRole) {
+        res.status(403).json({
+          ok: false,
+          code: "SHARED_CIRCLE_REQUIRED",
+          message:
+            "Peer delegation is bounded to within-circle routing. Caller and target share no circle, " +
+            "and target holds no anchor-circle or cross-link role.",
+          suggestedPath:
+            "Raise a tension and let the Rep Link carry it UP to a shared parent circle " +
+            "(rep_link_up_flow), OR propose a Cross-Link via IDM governance " +
+            "(cross_link_governance_change).",
+          callerCircles: [...callerCircles],
+          targetCircles: [...targetCircles],
+        });
+        return;
+      }
+
+      // Log every bypass via anchor/cross-link role so we can audit usage.
+      // A shared-circle delegation needs no special note.
+      if (sharedCircles.length === 0 && (targetHasAnchorRole || targetHasCrossLinkRole)) {
+        await logActivity(db, {
+          companyId,
+          actorType: "agent",
+          actorId: requester.agentId,
+          agentId: requester.agentId,
+          action: "agent.delegation.cross_circle_bypass",
+          entityType: "agent",
+          entityId: toAgentId,
+          details: {
+            title,
+            bypassReason: targetHasAnchorRole ? "anchor_circle_role" : "cross_link_role",
+            targetCircles: [...targetCircles],
+          },
+        }).catch((err) => {
+          logger.debug({ err }, "/delegate: cross-circle bypass log failed");
+        });
       }
 
       // T6 — skill-fit gate. Check each required skill against target's trust.

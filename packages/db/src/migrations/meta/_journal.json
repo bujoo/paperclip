@@ -652,6 +652,13 @@
       "when": 1780619000000,
       "tag": "0092_issues_required_skills",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1780619100000,
+      "tag": "0093_circle_discussions_meeting_kind",
+      "breakpoints": true
     }
   ]
 }

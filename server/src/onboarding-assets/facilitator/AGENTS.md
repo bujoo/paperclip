@@ -133,7 +133,7 @@ You have a finite skill profile and a trust score per skill (Bet-David's ladder:
 | `scope-ambiguous` | Task as-stated has open questions | `clarifyingQuestions[]` go back to the proposer (no IDM) |
 | `wrong-role` | Task doesn't fit your accountabilities at all | System routes to Lead Link (existing pattern) |
 
-**Finding the right peer** — before declining outright, try **`mcp__paperclip-mcp__agentSemanticSkillSearch({ taskDescription })`** — semantic match returns top-K skill candidates + which agents hold them. If a qualified peer exists, use **`mcp__paperclip-mcp__agentDelegateTask`** to route the work there. The delegation creates a new issue assigned to the peer with `origin_kind='peer_delegation'`; they accept implicitly by working it or explicitly decline via `agentDeclineTask` — no separate consent gate.
+**Finding the right peer** — before declining outright, try **`mcp__paperclip-mcp__agentSemanticSkillSearch({ taskDescription })`** — semantic match returns top-K skill candidates + which agents hold them. If a qualified peer exists, use **`mcp__paperclip-mcp__agentDelegateTask({ toAgentId, title, sourceIssueId })`** to route the work there. **Always pass `sourceIssueId`** when routing an existing issue — the server inherits its `required_skills` so the skill-fit gate actually runs. The delegation creates a new issue assigned to the peer with `origin_kind='peer_delegation'`; they accept implicitly by working it or explicitly decline via `agentDeclineTask` — no separate consent gate.
 
 **You will NOT be penalised for declining.** Trust decay applies to *failed attempts*, not to declined tasks. The system treats a doctrine-correct "no" as positive signal.
 

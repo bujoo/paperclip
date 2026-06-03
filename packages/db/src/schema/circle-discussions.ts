@@ -123,6 +123,12 @@ export const circleDiscussions = pgTable(
     integrationCyclesCount: integer("integration_cycles_count")
       .notNull()
       .default(0),
+    /** Phase 1.20 G4 — meeting kind: 'tactical' | 'governance' | 'adhoc' | null.
+     *  NULL preserves legacy/ungated discussions. Governance tensions raised
+     *  inside a discussion with `meeting_kind='tactical'` are refused per
+     *  Robertson constitution (governance never happens in tactical). The
+     *  authoritative CHECK constraint lives in migration 0093. */
+    meetingKind: text("meeting_kind"),
   },
   (table) => ({
     circleStatusIdx: index("circle_discussions_circle_status_idx").on(

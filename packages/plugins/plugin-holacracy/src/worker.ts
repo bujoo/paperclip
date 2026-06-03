@@ -1148,6 +1148,66 @@ async function isAgentLeadLinkInAncestor(
 }
 
 /**
+ * G3 — Authority gate for `forwardTension`.
+ *
+ * Robertson's constitution: only the Rep Link carries tensions UP from
+ * sub-circle to super-circle. We extend with a self-extinguishing fallback:
+ * the Lead Link may forward IF AND ONLY IF no Rep Link is currently elected
+ * in the source circle, AND the act auto-raises an "elect Rep Link"
+ * structural tension as a side effect (caller is responsible for raising it).
+ *
+ * Returns:
+ *   - { ok: true, mode: 'rep_link' }              — caller is the Rep Link, normal flow
+ *   - { ok: true, mode: 'lead_link_fallback' }    — caller is Lead Link + no Rep Link elected
+ *   - { ok: false, reason }                       — refuse
+ */
+async function gateForwardTensionAuthority(
+  agentId: string | null,
+  sourceCircleId: string,
+): Promise<
+  | { ok: true; mode: "rep_link" | "lead_link_fallback" }
+  | { ok: false; reason: string }
+> {
+  if (!dbCtx) throw new Error("DB not initialized");
+  if (!agentId) {
+    return { ok: false, reason: "Caller agentId required to validate Rep Link authority" };
+  }
+  const holders = await dbCtx.query<{ agent_id: string | null; role_type: string }>(
+    `SELECT ra.agent_id, r.role_type FROM ${tbl("roles")} r
+       LEFT JOIN ${tbl("role_assignments")} ra ON ra.role_id = r.id
+      WHERE r.circle_id = $1 AND r.role_type IN ('circle_rep','circle_lead')`,
+    [sourceCircleId],
+  );
+  const repLinks = holders.filter((h) => h.role_type === "circle_rep");
+  const callerIsRepLink = repLinks.some((rw) => rw.agent_id === agentId);
+  if (callerIsRepLink) return { ok: true, mode: "rep_link" };
+
+  const callerIsLeadLink = holders.some(
+    (h) => h.role_type === "circle_lead" && h.agent_id === agentId,
+  );
+  const repLinkElected = repLinks.some((rw) => rw.agent_id !== null);
+
+  if (callerIsLeadLink && !repLinkElected) {
+    return { ok: true, mode: "lead_link_fallback" };
+  }
+  if (callerIsLeadLink && repLinkElected) {
+    return {
+      ok: false,
+      reason:
+        "Lead Link cannot forward tensions UP when a Rep Link is elected. " +
+        "Ask the Rep Link of this circle to forward the tension.",
+    };
+  }
+  return {
+    ok: false,
+    reason:
+      "Only the Rep Link may forward tensions UP to a parent circle. " +
+      "If this circle has no Rep Link elected, the Lead Link may forward " +
+      "(an 'elect-rep-link' structural tension will be auto-raised).",
+  };
+}
+
+/**
  * Find the Lead Link (circle_lead role assignee) agent_id for a circle, if any.
  */
 async function findCircleLeadAgentId(circleId: string): Promise<string | null> {
@@ -5733,9 +5793,64 @@ const plugin = definePlugin({
 
     ctx.tools.register(
       TOOL_NAMES.raiseTension,
-      { displayName: "Raise Tension", description: "Raise a tension in a circle for processing in the next meeting", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, title: { type: "string" }, description: { type: "string" }, type: { type: "string", enum: ["operational", "governance"] } }, required: ["circleId", "title", "description", "type"] } },
+      { displayName: "Raise Tension", description: "Raise a tension in a circle for processing in the next meeting. Governance tensions are refused inside tactical discussions (Robertson constitution); the error response carries a pointer to the next governance meeting.", parametersSchema: { type: "object", properties: { circleId: { type: "string" }, title: { type: "string" }, description: { type: "string" }, type: { type: "string", enum: ["operational", "governance"] } }, required: ["circleId", "title", "description", "type"] } },
       async (params, runCtx): Promise<ToolResult> => {
         const { circleId, title, description, type: tensionType } = params as { circleId: string; title: string; description: string; type: string };
+
+        // G4 — Governance/tactical meeting separation. If a governance
+        // tension is raised by an agent who is currently inside an active
+        // tactical discussion (meeting_kind='tactical'), refuse with a
+        // structured pointer to the next governance meeting. The two
+        // meeting types have different objection criteria, facilitator
+        // powers, and output artifacts; mixing them silently degrades
+        // output quality (ChatDev phase-bleed ablation).
+        if (tensionType === "governance" && runCtx.agentId) {
+          const activeTactical = await dbCtx!.query<{
+            id: string;
+            circle_id: string;
+            phase: string;
+            decision_deadline: string | null;
+          }>(
+            `SELECT id, circle_id, phase, decision_deadline
+               FROM public.circle_discussions
+              WHERE circle_id = $1
+                AND status = 'in_progress'
+                AND meeting_kind = 'tactical'
+                AND $2::uuid = ANY(participant_agent_ids)
+              ORDER BY started_at DESC NULLS LAST
+              LIMIT 1`,
+            [circleId, runCtx.agentId],
+          );
+          if (activeTactical.length > 0) {
+            const nextGov = await dbCtx!.query<{ id: string; started_at: string | null }>(
+              `SELECT id, started_at
+                 FROM public.circle_discussions
+                WHERE circle_id = $1
+                  AND meeting_kind = 'governance'
+                  AND status IN ('scheduled','in_progress','pending')
+                ORDER BY started_at ASC NULLS LAST
+                LIMIT 1`,
+              [circleId],
+            );
+            const nextGovMeeting =
+              nextGov.length > 0
+                ? { discussionId: nextGov[0].id, scheduledAt: nextGov[0].started_at }
+                : null;
+            return {
+              content: JSON.stringify({
+                code: "PHASE_MISMATCH",
+                message:
+                  "Governance tensions cannot be raised inside a tactical discussion. " +
+                  "Hold the tension for the next governance meeting, or ask the " +
+                  "Facilitator to schedule one.",
+                tacticalDiscussionId: activeTactical[0].id,
+                nextGovernanceMeeting: nextGovMeeting,
+              }),
+              error: "phase mismatch: governance in tactical",
+            };
+          }
+        }
+
         const id = randomUUID();
         await dbCtx!.execute(
           `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type) VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -5831,7 +5946,7 @@ const plugin = definePlugin({
 
     ctx.tools.register(
       TOOL_NAMES.forwardTension,
-      { displayName: "Forward Tension", description: "Forward a tension from your circle to the parent circle (Circle Rep only)", parametersSchema: { type: "object", properties: { tensionId: { type: "string" }, context: { type: "string" } }, required: ["tensionId", "context"] } },
+      { displayName: "Forward Tension", description: "Forward a tension from your circle to the parent circle (Rep Link only; Lead Link may fallback when no Rep Link is elected — an 'elect-rep-link' tension is auto-raised in that case)", parametersSchema: { type: "object", properties: { tensionId: { type: "string" }, context: { type: "string" } }, required: ["tensionId", "context"] } },
       async (params, runCtx): Promise<ToolResult> => {
         const { tensionId, context } = params as { tensionId: string; context: string };
         const tensions = await dbCtx!.query<Tension>(`SELECT * FROM ${tbl("tensions")} WHERE id = $1`, [tensionId]);
@@ -5839,6 +5954,20 @@ const plugin = definePlugin({
         const sourceTension = tensions[0];
         const circles = await dbCtx!.query<Circle>(`SELECT * FROM ${tbl("circles")} WHERE id = $1`, [sourceTension.circle_id]);
         if (!circles[0]?.parent_circle_id) return { content: "Circle has no parent circle to forward to", error: "no parent" };
+
+        // G3 — Rep Link authority gate w/ Lead-Link self-extinguishing fallback.
+        const gate = await gateForwardTensionAuthority(runCtx.agentId ?? null, sourceTension.circle_id);
+        if (!gate.ok) {
+          return {
+            content: JSON.stringify({
+              code: "REP_LINK_REQUIRED",
+              reason: gate.reason,
+              sourceCircleId: sourceTension.circle_id,
+            }),
+            error: gate.reason,
+          };
+        }
+
         const forwardedId = randomUUID();
         await dbCtx!.execute(
           `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type) VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -5847,9 +5976,40 @@ const plugin = definePlugin({
         await dbCtx!.execute(`UPDATE ${tbl("tensions")} SET status = 'processing' WHERE id = $1`, [tensionId]);
         await dbCtx!.execute(
           `INSERT INTO ${tbl("audit_log")} (company_id, agent_id, circle_id, action_type, action_detail) VALUES ((SELECT company_id FROM ${tbl("circles")} WHERE id = $1), $2, $1, 'tension-forwarded', $3)`,
-          [sourceTension.circle_id, runCtx.agentId ?? null, JSON.stringify({ originalTensionId: tensionId, forwardedTensionId: forwardedId, context })],
+          [sourceTension.circle_id, runCtx.agentId ?? null, JSON.stringify({ originalTensionId: tensionId, forwardedTensionId: forwardedId, context, gateMode: gate.mode })],
         );
-        return { content: JSON.stringify({ forwardedTensionId: forwardedId, targetCircleId: circles[0].parent_circle_id, status: "forwarded" }) };
+
+        // If we fell back to Lead-Link authority, auto-raise a structural
+        // 'elect-rep-link' tension in the source circle so the fallback
+        // self-extinguishes the next time a Rep Link is elected.
+        let electRepLinkTensionId: string | null = null;
+        if (gate.mode === "lead_link_fallback") {
+          electRepLinkTensionId = randomUUID();
+          await dbCtx!.execute(
+            `INSERT INTO ${tbl("tensions")} (id, circle_id, source_agent_id, title, description, tension_type)
+             VALUES ($1, $2, $3, $4, $5, 'governance')`,
+            [
+              electRepLinkTensionId,
+              sourceTension.circle_id,
+              runCtx.agentId ?? null,
+              `Elect a Rep Link for ${circles[0].name}`,
+              `The Lead Link forwarded a tension UP because no Rep Link is currently elected ` +
+                `in this circle. Per Robertson's constitution, Rep Link carries sub-circle ` +
+                `tensions UP — Lead Link fallback is transitional. ` +
+                `Please run an election (kind='elect-rep-link') so future forwards go via the Rep Link.`,
+            ],
+          );
+        }
+
+        return {
+          content: JSON.stringify({
+            forwardedTensionId: forwardedId,
+            targetCircleId: circles[0].parent_circle_id,
+            status: "forwarded",
+            gateMode: gate.mode,
+            ...(electRepLinkTensionId ? { electRepLinkTensionId } : {}),
+          }),
+        };
       },
     );
 
